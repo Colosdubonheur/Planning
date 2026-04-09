@@ -1,0 +1,6 @@
+[build]
+  publish = "public"
+  command = "echo 'static site, nothing to build'"
+
+[functions]
+  node_bundler = "esbuild"
