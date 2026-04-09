@@ -1,1 +1,648 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Planning Stage BAFA Base</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy:      #1B3A5C;
+    --navy-dark: #102338;
+    --green:     #2A6049;
+    --green-lt:  #3D8067;
+    --amber:     #E07B2A;
+    --amber-lt:  #F4A45A;
+    --blue-ac:   #2563A8;
+    --matin-bg:  #FFFBEF;
+    --matin-bd:  #F0D998;
+    --repas-bg:  #EAF7EE;
+    --repas-bd:  #A8D5B5;
+    --aprem-bg:  #EFF4FF;
+    --aprem-bd:  #B0C8F0;
+    --done-clr:  #B0BDB0;
+    --done-bg:   #F5F6F5;
+    --done-line: #9BA89B;
+    --border:    #D0DBE8;
+    --text:      #1A2B3A;
+  }
 
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    font-family: 'Nunito', sans-serif;
+    background: #EEF3F8;
+    color: var(--text);
+    padding: 8px;
+    font-size: 8pt;
+    min-height: 100vh;
+  }
+
+  .wrapper {
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    overflow: hidden;
+  }
+
+  /* ── HEADER ─────────────────────────────────────────────────── */
+  .page-header {
+    background: linear-gradient(135deg, var(--navy-dark) 0%, var(--navy) 60%, var(--blue-ac) 100%);
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .header-icon {
+    width: 36px; height: 36px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .page-header h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 15pt;
+    color: white;
+    line-height: 1.1;
+  }
+  .page-header .subtitle {
+    font-size: 7.5pt;
+    color: rgba(255,255,255,0.65);
+    margin-top: 2px;
+    display: block;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  .header-right { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+  /* Sync status badge */
+  .sync-badge {
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 20px;
+    padding: 4px 10px;
+    color: white;
+    font-size: 7pt;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: background 0.3s;
+    background: rgba(255,255,255,0.1);
+  }
+  .sync-badge.ok      { background: rgba(42,160,80,0.35);  border-color: rgba(100,220,130,0.4); }
+  .sync-badge.syncing { background: rgba(240,160,50,0.35); border-color: rgba(240,200,80,0.4); }
+  .sync-badge.error   { background: rgba(220,60,60,0.35);  border-color: rgba(255,100,100,0.4); }
+  .sync-badge.offline { background: rgba(100,100,100,0.35);border-color: rgba(180,180,180,0.4); }
+
+  .sync-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .sync-badge.ok      .sync-dot { background: #5CE87A; }
+  .sync-badge.syncing .sync-dot { background: #FFCC44; animation: pulse 0.8s infinite; }
+  .sync-badge.error   .sync-dot { background: #FF6666; }
+  .sync-badge.offline .sync-dot { background: #AAAAAA; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .progress-badge {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 20px;
+    padding: 4px 10px;
+    color: white;
+    font-size: 7.5pt;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .progress-fill {
+    height: 4px; width: 60px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--amber-lt);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 0.4s ease;
+  }
+
+  .btn-print {
+    background: var(--amber);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 7.5pt;
+    font-weight: 800;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s;
+  }
+  .btn-print:hover { background: var(--amber-lt); }
+
+  .btn-reset {
+    background: rgba(255,255,255,0.12);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.28);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 7.5pt;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .btn-reset:hover { background: rgba(255,255,255,0.22); }
+
+  /* ── TABLE ──────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .col-headers th {
+    background: linear-gradient(180deg, var(--navy) 0%, #22496E 100%);
+    color: white;
+    padding: 7px 4px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.1);
+    font-size: 8pt;
+  }
+  .col-headers th.corner { background: var(--navy-dark); width: 28px; }
+  .col-headers th.weekend { background: linear-gradient(180deg, #1A3A50 0%, #1E4461 100%); }
+
+  .day-j    { font-size: 6.5pt; color: rgba(255,255,255,0.55); font-weight: 700; letter-spacing:0.05em; }
+  .day-name { font-size: 8.5pt; font-weight: 900; display: block; margin: 1px 0; }
+  .day-date { font-size: 7pt; color: rgba(255,255,255,0.7); font-weight: 600; }
+
+  td.slot-label {
+    width: 28px;
+    text-align: center;
+    font-weight: 900;
+    font-size: 6.5pt;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    border: 1px solid rgba(255,255,255,0.15);
+    padding: 4px 2px;
+  }
+  td.slot-label.sl-matin { background: #C17A14; color: white; }
+  td.slot-label.sl-repas { background: #2A6749; color: white; }
+  td.slot-label.sl-aprem { background: #2555A0; color: white; }
+
+  td.cell {
+    vertical-align: top;
+    padding: 5px 5px 4px;
+    border: 1px solid var(--border);
+  }
+  tr.row-matin td.cell { background: var(--matin-bg); border-color: var(--matin-bd); }
+  tr.row-repas td.cell { background: var(--repas-bg); border-color: var(--repas-bd); text-align:center; vertical-align:middle; }
+  tr.row-aprem td.cell { background: var(--aprem-bg); border-color: var(--aprem-bd); }
+
+  .repas-content {
+    font-size: 7.5pt;
+    font-weight: 900;
+    color: var(--green);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px 0;
+  }
+
+  /* ── TASKS ──────────────────────────────────────────────────── */
+  ul.tasks { list-style: none; }
+
+  li.task {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    cursor: pointer;
+    padding: 2px 3px;
+    border-radius: 3px;
+    margin-bottom: 2px;
+    transition: background 0.12s;
+    line-height: 1.35;
+    user-select: none;
+  }
+  li.task:hover { background: rgba(0,0,0,0.06); }
+  li.task:active { background: rgba(0,0,0,0.1); }
+  li.task.done { color: var(--done-clr); background: var(--done-bg); }
+  li.task.done .task-text {
+    text-decoration: line-through;
+    text-decoration-color: var(--done-line);
+    text-decoration-thickness: 1.5px;
+  }
+
+  .chk {
+    width: 10px; height: 10px; min-width: 10px;
+    border: 1.5px solid;
+    border-radius: 2px;
+    margin-top: 1.5px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  tr.row-matin li.task .chk { border-color: #C08A2A; }
+  tr.row-aprem li.task .chk { border-color: #4070B0; }
+  li.task.done .chk { background: var(--done-clr); border-color: var(--done-clr); }
+  li.task.done .chk::after { content:'✓'; font-size:7px; color:white; line-height:1; font-weight:900; }
+
+  .task-text { font-size: 7.3pt; line-height: 1.3; }
+
+  .badge {
+    display: inline-block;
+    font-size: 5.5pt;
+    font-weight: 900;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-left: 3px;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    white-space: nowrap;
+  }
+  .badge-alert { background: #E53935; color: white; }
+  .badge-warn  { background: var(--amber); color: white; }
+  .badge-ok    { background: var(--green); color: white; }
+
+  li.task.cancelled .task-text { text-decoration: line-through; color: #aaa; }
+  li.task.cancelled .chk { opacity: 0.3; pointer-events: none; }
+
+  /* ── LEGEND ─────────────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    gap: 14px;
+    padding: 6px 14px;
+    background: #F7F9FC;
+    border-top: 1px solid var(--border);
+    align-items: center;
+    font-size: 7pt;
+    flex-wrap: wrap;
+  }
+  .legend-title { font-weight: 800; color: var(--navy); font-size: 7pt; }
+  .legend-item { display: flex; align-items: center; gap: 4px; color: #555; }
+  .ld { width: 10px; height: 10px; border-radius: 2px; }
+  .ld-matin { background: var(--matin-bg); border: 1.5px solid var(--matin-bd); }
+  .ld-repas { background: var(--repas-bg); border: 1.5px solid var(--repas-bd); }
+  .ld-aprem { background: var(--aprem-bg); border: 1.5px solid var(--aprem-bd); }
+  .ld-done  { background: var(--done-bg);  border: 1.5px solid var(--done-clr); }
+  .legend-tip { margin-left:auto; color:#999; font-style:italic; font-size:6.5pt; }
+
+  /* ── PRINT ──────────────────────────────────────────────────── */
+  @media print {
+    body { background: white; padding: 0; font-size: 7pt; }
+    .wrapper { box-shadow: none; border-radius: 0; }
+    .no-print { display: none !important; }
+    .page-header { padding: 6px 10px; }
+    .page-header h1 { font-size: 12pt; }
+    td.cell { padding: 3px 4px; }
+    li.task { padding: 1px 2px; margin-bottom: 1px; }
+    .task-text { font-size: 6.5pt; }
+    .repas-content { padding: 4px 0; }
+    @page { size: A4 landscape; margin: 5mm; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrapper">
+
+  <!-- HEADER -->
+  <div class="page-header">
+    <div class="header-left">
+      <div class="header-icon">🎪</div>
+      <div>
+        <h1>Planning Stage BAFA Base</h1>
+        <span class="subtitle">Stage du 11 au 18 Avril · Formation Animateur · 8 jours</span>
+      </div>
+    </div>
+    <div class="header-right no-print">
+      <div class="sync-badge" id="sync-badge">
+        <div class="sync-dot"></div>
+        <span id="sync-text">Connexion…</span>
+      </div>
+      <div class="progress-badge">
+        <div class="progress-fill"><div class="progress-bar" id="progress-bar"></div></div>
+        <span id="progress-text">0 / 0</span>
+      </div>
+      <button class="btn-reset" onclick="resetAll()">↺ Réinitialiser</button>
+      <button class="btn-print" onclick="window.print()">🖨 Imprimer</button>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <table>
+    <thead>
+      <tr class="col-headers">
+        <th class="corner"></th>
+        <th class="weekend"><span class="day-j">J1</span><span class="day-name">Samedi</span><span class="day-date">11 avr</span></th>
+        <th><span class="day-j">J2</span><span class="day-name">Dimanche</span><span class="day-date">12 avr</span></th>
+        <th><span class="day-j">J3</span><span class="day-name">Lundi</span><span class="day-date">13 avr</span></th>
+        <th><span class="day-j">J4</span><span class="day-name">Mardi</span><span class="day-date">14 avr</span></th>
+        <th><span class="day-j">J5</span><span class="day-name">Mercredi</span><span class="day-date">15 avr</span></th>
+        <th><span class="day-j">J6</span><span class="day-name">Jeudi</span><span class="day-date">16 avr</span></th>
+        <th><span class="day-j">J7</span><span class="day-name">Vendredi</span><span class="day-date">17 avr</span></th>
+        <th class="weekend"><span class="day-j">J8</span><span class="day-name">Samedi</span><span class="day-date">18 avr</span></th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <!-- ═══ MATIN ═══════════════════════════════════════════ -->
+      <tr class="row-matin">
+        <td class="slot-label sl-matin">Matin</td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Accueil &amp; Présentation du stage</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Jeux de présentation</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Affiches : PE, règles de vie, attentes, critères d'éval.</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Histoire / Schéma narratif</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Restitution de l'histoire</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Réglementation périscolaire / extrascolaire</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Réglementation Vélo + Mer</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Les différentes responsabilités</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 1</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Réglementation Bus + Camping</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Connaissance de l'enfant</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text"><em style="color:#888;font-size:6.5pt">À voir selon l'heure</em></span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Vie quotidienne (hygiène, repas, aide-moi…)</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Journée type (aide-mémoire)</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Les émotions</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Addictions</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu 2</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu (suite ↑)</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Kermesse <span class="badge badge-ok">Fiche tech</span></span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Quizz final</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Administratif</span></li>
+        </ul></td>
+      </tr>
+
+      <!-- ═══ REPAS ═════════════════════════════════════════════ -->
+      <tr class="row-repas">
+        <td class="slot-label sl-repas">Repas</td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
+      </tr>
+
+      <!-- ═══ APRÈS-MIDI ════════════════════════════════════════ -->
+      <tr class="row-aprem">
+        <td class="slot-label sl-aprem">Après-midi</td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Éducation populaire</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Valeurs de la République &amp; Laïcité</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Personnages</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum + Prépa forum</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Les différents projets (PP, PE, PEDT, PA)</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Structure / Personnel</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Pharmacie / Assistant sanitaire</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ + Prépa HAJ</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 2</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 3</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 4 <span class="badge badge-warn">?</span></span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">VSS</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">UNICEF</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Fiche technique</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu + Prépa grands jeux</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text"><strong>Éval mi-stage</strong> <span class="badge badge-alert">⚑ Éval</span></span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Communication</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">LAS / VS / Maltraitance / Addictions</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Handicap</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Vie affective &amp; sexuelle</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Répartition des mandats</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task cancelled" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Assistant Sacha <span class="badge badge-warn">annulé</span></span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Jeux sportifs</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Prépa veillée</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Repas de la veillée</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu 3</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu 4 <span class="badge badge-warn">?</span></span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Rangement salle / Ménage</span></li>
+        </ul></td>
+        <td class="cell"><ul class="tasks">
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">CV + Lettre de motivation</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Questions / Bilan</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Bilan de stage</span></li>
+          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text"><strong>FIN DU STAGE 🎉</strong> <span class="badge badge-ok">Fin</span></span></li>
+        </ul></td>
+      </tr>
+
+    </tbody>
+  </table>
+
+  <!-- LEGEND -->
+  <div class="legend no-print">
+    <span class="legend-title">Légende :</span>
+    <span class="legend-item"><span class="ld ld-matin"></span> Matin</span>
+    <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
+    <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
+    <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
+    <span class="legend-item"><span class="badge badge-alert" style="font-size:6pt">⚑ Éval</span> Évaluation</span>
+    <span class="legend-item"><span class="badge badge-warn" style="font-size:6pt">?</span> À confirmer</span>
+    <span class="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
+  </div>
+
+</div>
+
+<script>
+  // ── CONFIG ────────────────────────────────────────────────────
+  const API     = '/api/state';
+  const POLL_MS = 5000; // check every 5 seconds
+
+  // ── STATE ─────────────────────────────────────────────────────
+  let lastUpdated  = 0;
+  let isSyncing    = false;
+  let pollTimer    = null;
+  let failCount    = 0;
+
+  // ── SYNC INDICATOR ────────────────────────────────────────────
+  function setSyncStatus(status, label) {
+    const badge = document.getElementById('sync-badge');
+    const text  = document.getElementById('sync-text');
+    badge.className = 'sync-badge ' + status;
+    text.textContent = label;
+  }
+
+  // ── PROGRESS ──────────────────────────────────────────────────
+  function updateProgress() {
+    const all  = document.querySelectorAll('li.task:not(.cancelled)');
+    const done = document.querySelectorAll('li.task.done:not(.cancelled)');
+    const pct  = all.length ? Math.round((done.length / all.length) * 100) : 0;
+    const bar  = document.getElementById('progress-bar');
+    const txt  = document.getElementById('progress-text');
+    if (bar) bar.style.width = pct + '%';
+    if (txt) txt.textContent = done.length + ' / ' + all.length;
+  }
+
+  // ── SERIALIZE STATE ───────────────────────────────────────────
+  function getState() {
+    const tasks = {};
+    document.querySelectorAll('li.task').forEach((el, i) => {
+      if (el.classList.contains('done')) tasks[String(i)] = true;
+    });
+    return { tasks, lastUpdated: Date.now() };
+  }
+
+  function applyState(state, animate) {
+    if (!state || !state.tasks) return;
+    document.querySelectorAll('li.task').forEach((el, i) => {
+      const should = !!state.tasks[String(i)];
+      const is     = el.classList.contains('done');
+      if (should !== is) {
+        el.classList.toggle('done', should);
+      }
+    });
+    lastUpdated = state.lastUpdated || 0;
+    updateProgress();
+  }
+
+  // ── API CALLS ─────────────────────────────────────────────────
+  async function fetchState() {
+    const res = await fetch(API, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  async function pushState(state) {
+    const res = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  // ── TOGGLE (user action) ──────────────────────────────────────
+  async function toggle(el) {
+    el.classList.toggle('done');
+    updateProgress();
+
+    setSyncStatus('syncing', 'Sauvegarde…');
+    isSyncing = true;
+    try {
+      const state = getState();
+      await pushState(state);
+      lastUpdated = state.lastUpdated;
+      failCount = 0;
+      setSyncStatus('ok', 'Synchronisé ✓');
+    } catch(e) {
+      failCount++;
+      setSyncStatus('error', 'Erreur de sync');
+    } finally {
+      isSyncing = false;
+    }
+  }
+
+  // ── POLL (receive changes from other users) ───────────────────
+  async function poll() {
+    if (isSyncing) return;
+    try {
+      const state = await fetchState();
+      if ((state.lastUpdated || 0) > lastUpdated) {
+        applyState(state, true);
+        setSyncStatus('ok', 'Synchronisé ✓');
+      } else {
+        setSyncStatus('ok', 'En ligne ✓');
+      }
+      failCount = 0;
+    } catch(e) {
+      failCount++;
+      if (failCount >= 3) {
+        setSyncStatus('offline', 'Hors ligne');
+      }
+    }
+  }
+
+  // ── RESET ─────────────────────────────────────────────────────
+  async function resetAll() {
+    if (!confirm('Réinitialiser tout le planning pour tout le monde ?')) return;
+    document.querySelectorAll('li.task.done').forEach(el => el.classList.remove('done'));
+    updateProgress();
+    setSyncStatus('syncing', 'Réinitialisation…');
+    try {
+      await pushState({ tasks: {}, lastUpdated: Date.now() });
+      lastUpdated = Date.now();
+      setSyncStatus('ok', 'Réinitialisé ✓');
+    } catch(e) {
+      setSyncStatus('error', 'Erreur');
+    }
+  }
+
+  // ── INIT ──────────────────────────────────────────────────────
+  async function init() {
+    setSyncStatus('syncing', 'Connexion…');
+    try {
+      const state = await fetchState();
+      applyState(state);
+      setSyncStatus('ok', 'En ligne ✓');
+      failCount = 0;
+    } catch(e) {
+      setSyncStatus('offline', 'Hors ligne');
+    }
+    pollTimer = setInterval(poll, POLL_MS);
+  }
+
+  window.addEventListener('DOMContentLoaded', init);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') poll();
+  });
+</script>
+</body>
+</html>
