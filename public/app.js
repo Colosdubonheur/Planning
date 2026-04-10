@@ -443,4 +443,180 @@ async function toggleTask(taskId, li) {
   }
 }
 
-// === PART 2 END — task menu / modals / users modal / init in 3-4 ===
+// ── TASK MENU ──────────────────────────────────────────────────
+let openMenuEl = null;
+
+function closeTaskMenu() {
+  if (openMenuEl && openMenuEl.parentNode) {
+    openMenuEl.parentNode.removeChild(openMenuEl);
+  }
+  openMenuEl = null;
+}
+
+function openTaskMenu(taskId, anchor) {
+  closeTaskMenu();
+  const task = currentState && currentState.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  const column = currentState.tasks
+    .filter((t) => t.dayId === task.dayId && t.slotId === task.slotId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = column.findIndex((t) => t.id === taskId);
+  const canUp = idx > 0;
+  const canDown = idx >= 0 && idx < column.length - 1;
+
+  const menu = document.createElement('div');
+  menu.className = 'task-menu';
+  let html = '<button type="button" data-menu-action="rename">✎ Renommer</button>';
+  if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
+  if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
+  html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
+  html += '<button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>';
+  menu.innerHTML = html;
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, Math.min(
+    window.innerWidth - menu.offsetWidth - 8,
+    window.scrollX + rect.left
+  )) + 'px';
+  openMenuEl = menu;
+
+  menu.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-menu-action]');
+    if (!btn) return;
+    const action = btn.dataset.menuAction;
+    closeTaskMenu();
+    const t = currentState.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    if (action === 'rename') openEditModal(t);
+    else if (action === 'move') openMoveModal(t);
+    else if (action === 'remove') confirmRemove(t);
+    else if (action === 'up' || action === 'down') {
+      try { await pushOp({ op: 'reorder', taskId, direction: action }); }
+      catch (err) { alert(err.message || 'Erreur'); }
+    }
+  });
+}
+
+document.addEventListener('click', (e) => {
+  if (openMenuEl && !openMenuEl.contains(e.target)) closeTaskMenu();
+});
+
+// ── EDIT MODAL (rename + move + add) ───────────────────────────
+let modalMode = null; // 'rename' | 'move' | 'add'
+let editTaskId = null;
+let editAddContext = null; // { dayId, slotId }
+
+function openEditModal(task) {
+  modalMode = 'rename';
+  editTaskId = task.id;
+  $('edit-modal-title').textContent = 'Renommer la tâche';
+  $('edit-text').value = task.text;
+  $('edit-text').disabled = false;
+  $('edit-location').style.display = 'none';
+  $('edit-error').textContent = '';
+  $('edit-modal').classList.remove('hidden');
+  setTimeout(() => $('edit-text').focus(), 50);
+}
+
+function openMoveModal(task) {
+  modalMode = 'move';
+  editTaskId = task.id;
+  $('edit-modal-title').textContent = 'Déplacer la tâche';
+  $('edit-text').value = task.text;
+  $('edit-text').disabled = true;
+  populateLocationSelects(task.dayId, task.slotId);
+  $('edit-location').style.display = '';
+  $('edit-error').textContent = '';
+  $('edit-modal').classList.remove('hidden');
+}
+
+function openAddTaskModal(dayId, slotId) {
+  modalMode = 'add';
+  editTaskId = null;
+  editAddContext = { dayId, slotId };
+  $('edit-modal-title').textContent = 'Nouvelle tâche';
+  $('edit-text').value = '';
+  $('edit-text').disabled = false;
+  populateLocationSelects(dayId, slotId);
+  $('edit-location').style.display = '';
+  $('edit-error').textContent = '';
+  $('edit-modal').classList.remove('hidden');
+  setTimeout(() => $('edit-text').focus(), 50);
+}
+
+function populateLocationSelects(dayId, slotId) {
+  const daySel = $('edit-day');
+  const slotSel = $('edit-slot');
+  if (!currentState) return;
+  daySel.innerHTML = '';
+  for (const d of currentState.days) {
+    const opt = document.createElement('option');
+    opt.value = d.id;
+    opt.textContent = `${d.short || ''} – ${d.name || ''}`;
+    if (d.id === dayId) opt.selected = true;
+    daySel.appendChild(opt);
+  }
+  slotSel.innerHTML = '';
+  for (const s of currentState.slots) {
+    if (s.id === 'repas') continue;
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.label;
+    if (s.id === slotId) opt.selected = true;
+    slotSel.appendChild(opt);
+  }
+}
+
+function closeEditModal() {
+  $('edit-modal').classList.add('hidden');
+  $('edit-text').disabled = false;
+  modalMode = null;
+  editTaskId = null;
+  editAddContext = null;
+}
+
+async function submitEditModal() {
+  const text = $('edit-text').value.trim();
+  const errEl = $('edit-error');
+  errEl.textContent = '';
+  try {
+    if (modalMode === 'rename') {
+      if (!text) { errEl.textContent = 'Texte vide'; return; }
+      await pushOp({ op: 'edit', taskId: editTaskId, text });
+    } else if (modalMode === 'add') {
+      if (!text) { errEl.textContent = 'Texte vide'; return; }
+      const dayId = $('edit-day').value;
+      const slotId = $('edit-slot').value;
+      await pushOp({ op: 'add', dayId, slotId, text });
+    } else if (modalMode === 'move') {
+      const dayId = $('edit-day').value;
+      const slotId = $('edit-slot').value;
+      await pushOp({ op: 'move', taskId: editTaskId, dayId, slotId });
+    }
+    closeEditModal();
+  } catch (e) {
+    errEl.textContent = e.message || 'Erreur';
+  }
+}
+
+async function confirmRemove(task) {
+  if (!confirm(`Supprimer définitivement la tâche « ${task.text} » ?`)) return;
+  try {
+    await pushOp({ op: 'remove', taskId: task.id });
+  } catch (e) {
+    alert(e.message || 'Erreur lors de la suppression');
+  }
+}
+
+// ── RESET ──────────────────────────────────────────────────────
+async function resetAll() {
+  if (!confirm('Décocher toutes les tâches pour tout le monde ?')) return;
+  try {
+    await pushOp({ op: 'reset' });
+  } catch (e) {
+    alert(e.message || 'Erreur');
+  }
+}
+
+// === PART 3 END — users modal + fetchState + poll + init in 4/4 ===
