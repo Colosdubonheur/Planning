@@ -294,19 +294,24 @@
   .task-text { font-size: 7.3pt; line-height: 1.3; flex: 1; }
 
   .task-menu-btn {
-    background: none;
+    background: rgba(0,0,0,0.06);
     border: none;
-    font-size: 10pt;
+    font-size: 11pt;
+    font-weight: 900;
     line-height: 1;
-    color: #666;
+    color: #555;
     cursor: pointer;
-    padding: 0 3px;
+    padding: 3px 7px;
+    border-radius: 4px;
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s, background 0.15s;
     flex-shrink: 0;
+    min-width: 22px;
+    min-height: 18px;
+    align-self: center;
   }
   li.task:hover .task-menu-btn { opacity: 1; }
-  .task-menu-btn:hover { color: var(--navy); }
+  .task-menu-btn:hover { background: rgba(0,0,0,0.12); color: var(--navy); }
 
   .btn-add-task {
     display: block;
@@ -363,7 +368,21 @@
     padding: 28px 26px;
     max-width: 360px;
     width: 100%;
+    position: relative;
   }
+  .gate-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    background: none;
+    border: none;
+    font-size: 22pt;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 4px 10px;
+  }
+  .gate-close:hover { color: #333; }
   .gate-card h2 {
     font-family: 'Playfair Display', serif;
     font-size: 18pt;
@@ -580,8 +599,14 @@
     .task-menu-btn {
       opacity: 1;
       font-size: 14pt;
-      padding: 2px 8px;
+      padding: 6px 10px;
+      background: rgba(0,0,0,0.1);
+      min-width: 34px;
+      min-height: 34px;
+      border: 1px solid rgba(0,0,0,0.08);
     }
+    .task-menu { min-width: 180px; }
+    .task-menu button { padding: 12px 14px; font-size: 10pt; }
     li.task { padding: 5px 4px; margin-bottom: 3px; }
     .chk { width: 14px; height: 14px; min-width: 14px; }
     li.task.done .chk::after { font-size: 10px; }
@@ -624,10 +649,11 @@
 <body>
 
 <!-- ═══ LOGIN GATE ════════════════════════════════════════════════ -->
-<div class="gate-backdrop" id="login-gate">
+<div class="gate-backdrop hidden" id="login-gate">
   <div class="gate-card">
+    <button type="button" class="gate-close" id="gate-close" onclick="closeLoginGate()" aria-label="Fermer">×</button>
     <h2>Planning BAFA</h2>
-    <div class="gate-sub">Connectez-vous pour accéder au planning</div>
+    <div class="gate-sub">Connectez-vous pour modifier le planning</div>
     <form id="login-form">
       <div class="gate-field">
         <label for="login-user">Identifiant</label>
@@ -720,6 +746,7 @@
         <span id="user-name"></span>
         <span class="user-role" id="user-role-label"></span>
       </div>
+      <button class="btn-users" id="btn-login" style="display:none" onclick="openLoginGate()">🔒 <span class="btn-label">Se connecter</span></button>
       <button class="btn-users" id="btn-users" style="display:none" onclick="openUsersModal()">👥 <span class="btn-label">Utilisateurs</span></button>
       <button class="btn-reset" id="btn-reset" style="display:none" onclick="resetAll()">↺ <span class="btn-label">Réinitialiser</span></button>
       <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
@@ -739,7 +766,7 @@
     <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
     <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
     <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
-    <span class="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
+    <span class="legend-tip" id="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
   </div>
 
 </div>

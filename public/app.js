@@ -75,28 +75,38 @@ async function login(user, password) {
 async function logout() {
   try { await apiFetch(API_LOGOUT, { method: 'POST' }); } catch {}
   currentUser = null;
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  showLoginGate();
+  await startPublic();
 }
 
-function showLoginGate() {
+function openLoginGate() {
   $('login-gate').classList.remove('hidden');
-  $('user-chip').style.display = 'none';
-  $('btn-users').style.display = 'none';
-  $('btn-reset').style.display = 'none';
-  $('btn-logout').style.display = 'none';
   $('login-error').textContent = '';
   $('login-user').value = '';
   $('login-password').value = '';
   setTimeout(() => $('login-user').focus(), 50);
 }
 
-function hideLoginGate() {
+function closeLoginGate() {
   $('login-gate').classList.add('hidden');
 }
 
+// Alias for backwards compatibility
+function showLoginGate() { openLoginGate(); }
+function hideLoginGate() { closeLoginGate(); }
+
 function applyUserUI() {
-  if (!currentUser) return;
+  const tip = $('legend-tip');
+  if (!currentUser) {
+    // Public / read-only mode
+    $('user-chip').style.display = 'none';
+    $('btn-users').style.display = 'none';
+    $('btn-reset').style.display = 'none';
+    $('btn-logout').style.display = 'none';
+    $('btn-login').style.display = '';
+    if (tip) tip.textContent = '👁 Lecture seule — connectez-vous pour modifier';
+    return;
+  }
+  $('btn-login').style.display = 'none';
   $('user-chip').style.display = '';
   $('user-name').textContent = currentUser.user;
   const roleLabel = currentUser.role === 'editor' ? 'Éditeur' : 'Validateur';
@@ -105,9 +115,11 @@ function applyUserUI() {
   if (currentUser.role === 'editor') {
     $('btn-users').style.display = '';
     $('btn-reset').style.display = '';
+    if (tip) tip.textContent = '💡 Cliquez un item pour cocher · « ⋯ » pour éditer';
   } else {
     $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
+    if (tip) tip.textContent = '💡 Cliquez un item pour le cocher';
   }
 }
 
@@ -232,7 +244,9 @@ async function pushOp(op) {
   } catch (e) {
     failCount++;
     if (e.status === 401) {
-      showLoginGate();
+      currentUser = null;
+      applyUserUI();
+      openLoginGate();
     } else if (e.status === 403) {
       setSyncStatus('error', 'Permission refusée');
     } else {
@@ -247,6 +261,11 @@ async function pushOp(op) {
 }
 
 async function toggleTask(taskId, li) {
+  if (!currentUser) {
+    // Public / read-only mode — invite the user to log in.
+    openLoginGate();
+    return;
+  }
   const task = currentState && currentState.tasks.find((t) => t.id === taskId);
   if (!task) return;
   const nextDone = !task.done;
@@ -271,13 +290,23 @@ function closeTaskMenu() {
 
 function openTaskMenu(taskId, anchor) {
   closeTaskMenu();
+  const task = currentState && currentState.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  const column = currentState.tasks
+    .filter((t) => t.dayId === task.dayId && t.slotId === task.slotId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = column.findIndex((t) => t.id === taskId);
+  const canUp = idx > 0;
+  const canDown = idx >= 0 && idx < column.length - 1;
+
   const menu = document.createElement('div');
   menu.className = 'task-menu';
-  menu.innerHTML = `
-    <button type="button" data-menu-action="rename">✎ Renommer</button>
-    <button type="button" data-menu-action="move">→ Déplacer</button>
-    <button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>
-  `;
+  let html = '<button type="button" data-menu-action="rename">✎ Renommer</button>';
+  if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
+  if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
+  html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
+  html += '<button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>';
+  menu.innerHTML = html;
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
   menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
@@ -287,16 +316,20 @@ function openTaskMenu(taskId, anchor) {
   )) + 'px';
   openMenuEl = menu;
 
-  menu.addEventListener('click', (e) => {
+  menu.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-menu-action]');
     if (!btn) return;
     const action = btn.dataset.menuAction;
     closeTaskMenu();
-    const task = currentState.tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    if (action === 'rename') openEditModal(task);
-    else if (action === 'move') openMoveModal(task);
-    else if (action === 'remove') confirmRemove(task);
+    const t = currentState.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    if (action === 'rename') openEditModal(t);
+    else if (action === 'move') openMoveModal(t);
+    else if (action === 'remove') confirmRemove(t);
+    else if (action === 'up' || action === 'down') {
+      try { await pushOp({ op: 'reorder', taskId, direction: action }); }
+      catch (err) { alert(err.message || 'Erreur'); }
+    }
   });
 }
 
@@ -510,12 +543,10 @@ async function poll() {
       renderPlanning();
     }
     failCount = 0;
-    setSyncStatus('ok', 'En ligne ✓');
+    setSyncStatus('ok', currentUser ? 'En ligne ✓' : 'Lecture seule');
   } catch (e) {
-    if (e.status === 401) {
-      showLoginGate();
-      return;
-    }
+    // GET /api/state is public now, so a 401 here means the server is
+    // misconfigured — just treat it as a transient error.
     failCount++;
     if (failCount >= 3) setSyncStatus('offline', 'Hors ligne');
   }
@@ -531,10 +562,22 @@ async function startAuthenticated() {
     setSyncStatus('ok', 'En ligne ✓');
     failCount = 0;
   } catch (e) {
-    if (e.status === 401) {
-      showLoginGate();
-      return;
-    }
+    setSyncStatus('offline', 'Hors ligne');
+  }
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+async function startPublic() {
+  currentUser = null;
+  hideLoginGate();
+  applyUserUI();
+  setSyncStatus('syncing', 'Chargement…');
+  try {
+    await fetchState();
+    setSyncStatus('ok', 'Lecture seule');
+    failCount = 0;
+  } catch (e) {
     setSyncStatus('offline', 'Hors ligne');
   }
   if (pollTimer) clearInterval(pollTimer);
@@ -577,7 +620,7 @@ async function init() {
   if (me) {
     await startAuthenticated();
   } else {
-    showLoginGate();
+    await startPublic();
   }
 }
 
@@ -592,5 +635,7 @@ window.submitNewUser = submitNewUser;
 window.closeEditModal = closeEditModal;
 window.resetAll = resetAll;
 window.logout = logout;
+window.openLoginGate = openLoginGate;
+window.closeLoginGate = closeLoginGate;
 
 window.addEventListener('DOMContentLoaded', init);
