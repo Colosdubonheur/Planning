@@ -4,6 +4,7 @@ import {
   buildAuthCookie,
   buildClearCookie,
   requireAuth,
+  getUser,
 } from "./_lib/auth.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
@@ -33,8 +34,15 @@ export default async (req) => {
       const auth = await authenticate(user, password);
       if (!auth) return json({ error: "Identifiant ou mot de passe incorrect" }, { status: 401 });
       const token = signToken({ user: auth.user, role: auth.role });
+      // Expose isMaster so the UI can gate role-editing controls immediately
+      // after login, without waiting for the next /api/auth/me poll.
+      let isMaster = false;
+      try {
+        const rec = await getUser(auth.user);
+        isMaster = !!(rec && rec.parent === null);
+      } catch {}
       return new Response(
-        JSON.stringify({ user: auth.user, role: auth.role }),
+        JSON.stringify({ user: auth.user, role: auth.role, isMaster }),
         { status: 200, headers: { ...jsonHeaders, "Set-Cookie": buildAuthCookie(token) } }
       );
     } catch (e) {
@@ -54,7 +62,15 @@ export default async (req) => {
   if (path.endsWith("/me") && req.method === "GET") {
     const auth = requireAuth(req);
     if (auth.error) return auth.error;
-    return json({ user: auth.user.user, role: auth.user.role });
+    // Include isMaster (root user with parent === null) so the UI can show
+    // the right controls: only the master can modify users or create other
+    // directeurs.
+    let isMaster = false;
+    try {
+      const rec = await getUser(auth.user.user);
+      isMaster = !!(rec && rec.parent === null);
+    } catch {}
+    return json({ user: auth.user.user, role: auth.user.role, isMaster });
   }
 
   return json({ error: "Not found" }, { status: 404 });

@@ -112,11 +112,37 @@ export async function loadUsers(store) {
       // autoAssign: directors with this flag get granted access to every
       // newly-created planning.  Defaults to false (added in a later version).
       rec.autoAssign = rec.autoAssign === true;
+      // The "master" of the hierarchy (root user with no parent) is always
+      // considered auto-assigned and always a directeur: they're the single
+      // account with full back-office privileges.  Enforced on every read so
+      // the invariant can't drift.
+      if (rec.parent === null) {
+        rec.role = "directeur";
+        rec.autoAssign = true;
+      }
     }
     return parsed;
   } catch {
     return {};
   }
+}
+
+// Is `name` the "master" of the hierarchy?  The master is the single root
+// user (parent === null), typically the bootstrap admin.  Only the master
+// can create directeurs and modify existing users' roles or auto-assign
+// flag; regular directeurs are limited to creating formateurs.
+export function isMasterUser(name, users) {
+  const rec = users ? users[name] : null;
+  return !!(rec && rec.parent === null);
+}
+
+export async function getMasterUsername() {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  for (const [name, rec] of Object.entries(users)) {
+    if (rec && rec.parent === null) return name;
+  }
+  return null;
 }
 
 export async function saveUsers(store, users) {
@@ -246,18 +272,29 @@ export async function createUser({ user, password, role, parent, plannings, auto
   };
 }
 
-// Update a user's mutable fields (role, autoAssign).  `by` must be in the
-// authenticated directeur's subtree (enforced by the caller beforehand is
-// fine, we double-check here too).  The caller cannot demote themselves from
-// directeur to formateur — that would lock them out of the back-office.
+// Update a user's mutable fields (role, autoAssign).  Only the master of
+// the hierarchy (the root user with parent === null) can call this: regular
+// directeurs are intentionally locked out of role management.  Additional
+// invariants:
+//   - The master cannot be demoted (their role is locked to directeur and
+//     their autoAssign to true via loadUsers normalization).
+//   - Nobody can toggle their own autoAssign flag ("ne peut pas s'affecter
+//     l'auto-ajout" — applies even to the master, who's auto-assigned by
+//     virtue of being the master, not through a togglable flag).
 export async function updateUser(user, updates, by) {
   const store = getUsersStore();
   const users = await loadUsers(store);
   if (!users[user]) throw new Error("Utilisateur introuvable");
   if (!users[by]) throw new Error("Utilisateur appelant introuvable");
+  if (!isMasterUser(by, users)) {
+    throw new Error("Seul l'utilisateur maître peut modifier les utilisateurs");
+  }
+  // The master's subtree is the whole tree, so this check is a formality,
+  // but keep it for defense in depth.
   if (!isInSubtree(user, by, users)) throw new Error("Permission refusée (hors sous-arbre)");
 
   const rec = users[user];
+  const targetIsMaster = isMasterUser(user, users);
   let changed = false;
 
   if (updates && typeof updates === "object") {
@@ -266,6 +303,9 @@ export async function updateUser(user, updates, by) {
       if (role === "editor") role = "directeur";
       else if (role === "validator") role = "formateur";
       if (role !== "directeur" && role !== "formateur") throw new Error("Rôle invalide");
+      if (targetIsMaster && role !== "directeur") {
+        throw new Error("Le rôle du maître ne peut pas être modifié");
+      }
       if (user === by && role !== "directeur") {
         throw new Error("Impossible de rétrograder votre propre compte");
       }
@@ -278,6 +318,15 @@ export async function updateUser(user, updates, by) {
     }
     if (updates.autoAssign !== undefined) {
       const next = updates.autoAssign === true;
+      // Nobody can modify their own auto-assign flag.
+      if (user === by) {
+        throw new Error("Vous ne pouvez pas modifier votre propre auto-ajout");
+      }
+      // The master is always auto-assigned — their flag is derived from
+      // their root position in the hierarchy and can't be turned off.
+      if (targetIsMaster && !next) {
+        throw new Error("Le maître est toujours auto-assigné");
+      }
       if (next && rec.role !== "directeur") {
         throw new Error("Seuls les directeurs peuvent être assignés automatiquement");
       }

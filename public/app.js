@@ -395,6 +395,14 @@ function canManageUsers() {
   return isDirecteur();
 }
 
+// Is the current user the "master" of the hierarchy (the root user with no
+// parent)?  Only the master can create directeurs, toggle auto-assign, or
+// modify existing users' roles.  Regular directeurs are limited to creating
+// formateurs under themselves.
+function isMaster() {
+  return !!(currentUser && currentUser.isMaster === true);
+}
+
 // ── PLANNINGS (list, create, rename, delete, switch) ───────────
 async function loadPlanningsList() {
   if (!currentUser) { planningsList = []; return planningsList; }
@@ -1147,6 +1155,22 @@ async function openUsersModal() {
   $('new-user-role').value = 'formateur';
   const autoCb = $('new-user-auto');
   if (autoCb) autoCb.checked = false;
+
+  // Gate the role dropdown + auto-assign section on master status.
+  // Non-masters can only create formateurs so the dropdown is redundant.
+  const roleField = $('new-user-role-field');
+  const title = $('new-user-section-title');
+  const hint = $('new-user-section-hint');
+  if (roleField) roleField.style.display = isMaster() ? '' : 'none';
+  if (title) {
+    title.textContent = isMaster()
+      ? 'Nouveau sous-utilisateur'
+      : 'Nouveau formateur';
+  }
+  if (hint) {
+    hint.style.display = isMaster() ? '' : 'none';
+  }
+
   onNewUserRoleChange();
   renderNewUserPlanningPicker();
   await refreshUsersList();
@@ -1154,12 +1178,12 @@ async function openUsersModal() {
 
 // Show/hide the auto-assign checkbox based on the selected role.  It only
 // applies to directeurs (formateurs can't own plannings so the flag would
-// be a no-op).
+// be a no-op) AND only the master of the hierarchy can flip it.
 function onNewUserRoleChange() {
   const field = $('new-user-auto-field');
   const cb = $('new-user-auto');
   if (!field || !cb) return;
-  if ($('new-user-role').value === 'directeur') {
+  if (isMaster() && $('new-user-role').value === 'directeur') {
     field.style.display = '';
   } else {
     field.style.display = 'none';
@@ -1225,52 +1249,76 @@ async function refreshUsersList() {
       nameSpan.innerHTML = `${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}`;
       header.appendChild(nameSpan);
 
-      // Role dropdown (click to change).  Disabled for self since demoting
-      // yourself would instantly lock you out of the back-office.
-      const roleSel = document.createElement('select');
-      roleSel.className = `u-role-select ${u.role}`;
-      roleSel.title = isSelf
-        ? 'Vous ne pouvez pas modifier votre propre rôle'
-        : 'Changer le rôle de cet utilisateur';
-      roleSel.disabled = !!isSelf;
-      for (const r of ['formateur', 'directeur']) {
-        const opt = document.createElement('option');
-        opt.value = r;
-        opt.textContent = r === 'directeur' ? 'Directeur' : 'Formateur';
-        if (u.role === r) opt.selected = true;
-        roleSel.appendChild(opt);
-      }
-      roleSel.addEventListener('change', async () => {
-        const previous = u.role;
-        const next = roleSel.value;
-        roleSel.disabled = true;
-        try {
-          await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ role: next }),
-          });
-          $('users-error').textContent = '';
-          await refreshUsersList();
-        } catch (e) {
-          roleSel.value = previous;
-          $('users-error').textContent = e.message || 'Erreur';
-          roleSel.disabled = !!isSelf;
-        }
-      });
-      header.appendChild(roleSel);
+      const isTargetMaster = u.parent === null;
+      const canEditRoles = isMaster();
 
-      // Auto-assign toggle: only meaningful on directeurs.  When on, the user
-      // gets automatic access to every newly-created planning.
+      // Role control: editable dropdown for the master, static badge for
+      // regular directeurs (they can't change roles at all).  Self- and
+      // master-editing are always blocked — the master's role is locked
+      // and nobody can demote themselves.
+      if (canEditRoles && !isSelf && !isTargetMaster) {
+        const roleSel = document.createElement('select');
+        roleSel.className = `u-role-select ${u.role}`;
+        roleSel.title = 'Changer le rôle de cet utilisateur';
+        for (const r of ['formateur', 'directeur']) {
+          const opt = document.createElement('option');
+          opt.value = r;
+          opt.textContent = r === 'directeur' ? 'Directeur' : 'Formateur';
+          if (u.role === r) opt.selected = true;
+          roleSel.appendChild(opt);
+        }
+        roleSel.addEventListener('change', async () => {
+          const previous = u.role;
+          const next = roleSel.value;
+          roleSel.disabled = true;
+          try {
+            await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ role: next }),
+            });
+            $('users-error').textContent = '';
+            await refreshUsersList();
+          } catch (e) {
+            roleSel.value = previous;
+            $('users-error').textContent = e.message || 'Erreur';
+            roleSel.disabled = false;
+          }
+        });
+        header.appendChild(roleSel);
+      } else {
+        const badge = document.createElement('span');
+        badge.className = `u-role ${u.role}`;
+        badge.textContent = isTargetMaster
+          ? 'Maître'
+          : (u.role === 'directeur' ? 'Directeur' : 'Formateur');
+        if (isTargetMaster) badge.title = "Utilisateur maître de la structure";
+        header.appendChild(badge);
+      }
+
+      // Auto-assign toggle: master-only control, disabled on self and on
+      // the master themselves (whose auto-assign is implicit).  For
+      // non-master viewers we still display the current state (read-only)
+      // so they can see which directors are super-admins.
+      const autoLocked =
+        !canEditRoles || isSelf || isTargetMaster || u.role !== 'directeur';
       const autoLbl = document.createElement('label');
-      autoLbl.className = `u-auto${u.autoAssign ? ' active' : ''}${u.role !== 'directeur' ? ' disabled' : ''}`;
-      autoLbl.title = u.role === 'directeur'
-        ? 'Ajouter automatiquement à tous les nouveaux plannings créés'
-        : 'Réservé aux directeurs';
+      autoLbl.className =
+        `u-auto${u.autoAssign ? ' active' : ''}${autoLocked ? ' disabled' : ''}`;
+      autoLbl.title = isTargetMaster
+        ? "Le maître est toujours auto-assigné"
+        : !canEditRoles
+        ? "Seul l'utilisateur maître peut modifier l'auto-ajout"
+        : isSelf
+        ? "Vous ne pouvez pas modifier votre propre auto-ajout"
+        : u.role !== 'directeur'
+        ? 'Réservé aux directeurs'
+        : 'Ajouter automatiquement à tous les nouveaux plannings créés';
       const autoCb = document.createElement('input');
       autoCb.type = 'checkbox';
       autoCb.checked = !!u.autoAssign;
-      autoCb.disabled = u.role !== 'directeur';
+      autoCb.disabled = autoLocked;
       autoCb.addEventListener('change', async () => {
+        if (autoLocked) { autoCb.checked = !!u.autoAssign; return; }
         const previous = !!u.autoAssign;
         const next = autoCb.checked;
         autoCb.disabled = true;
@@ -1286,7 +1334,7 @@ async function refreshUsersList() {
           autoCb.checked = previous;
           $('users-error').textContent = e.message || 'Erreur';
         } finally {
-          autoCb.disabled = u.role !== 'directeur';
+          autoCb.disabled = autoLocked;
         }
       });
       autoLbl.appendChild(autoCb);
@@ -1360,8 +1408,11 @@ async function refreshUsersList() {
 async function submitNewUser() {
   const user = $('new-user-name').value.trim();
   const password = $('new-user-pwd').value;
-  const role = $('new-user-role').value;
-  const autoAssign = role === 'directeur' && $('new-user-auto').checked;
+  // Non-masters can only create formateurs.  We also force that client-side
+  // so the UI matches the backend rule and avoids surprise 403s.
+  const role = isMaster() ? $('new-user-role').value : 'formateur';
+  const autoAssign =
+    isMaster() && role === 'directeur' && $('new-user-auto').checked;
   const plannings = getSelectedNewUserPlannings();
   const errEl = $('users-error');
   errEl.textContent = '';
