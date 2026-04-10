@@ -90,6 +90,27 @@ function applyOp(state, op, actor) {
       break;
     }
 
+    case "reorder": {
+      if (actor.role !== "editor") throw new Error("Permission refusée");
+      const task = state.tasks.find((t) => t.id === op.taskId);
+      if (!task) throw new Error("Tâche introuvable");
+      if (op.direction !== "up" && op.direction !== "down") {
+        throw new Error("Direction invalide");
+      }
+      const column = state.tasks
+        .filter((t) => t.dayId === task.dayId && t.slotId === task.slotId)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const idx = column.findIndex((t) => t.id === task.id);
+      const newIdx = op.direction === "up" ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= column.length) {
+        // Already at the edge — no-op but still bump version so clients refresh cleanly
+        break;
+      }
+      [column[idx], column[newIdx]] = [column[newIdx], column[idx]];
+      column.forEach((t, i) => { t.order = i; });
+      break;
+    }
+
     case "move": {
       if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
@@ -131,12 +152,10 @@ export default async (req) => {
     return new Response(null, { status: 204, headers: jsonHeaders });
   }
 
-  const auth = requireAuth(req);
-  if (auth.error) return auth.error;
-  const actor = auth.user; // { user, role }
-
   const store = getStore({ name: "planning", consistency: "strong" });
 
+  // GET is public (read-only) so the planning can be shared with trainees
+  // without any login. Writes always require auth below.
   if (req.method === "GET") {
     try {
       const result = await store.getWithMetadata("state", { type: "json" });
@@ -153,6 +172,10 @@ export default async (req) => {
   }
 
   if (req.method === "POST") {
+    const auth = requireAuth(req);
+    if (auth.error) return auth.error;
+    const actor = auth.user; // { user, role }
+
     let body;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
 

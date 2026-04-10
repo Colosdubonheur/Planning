@@ -163,7 +163,7 @@
     text-transform: uppercase;
   }
 
-  .btn-print, .btn-reset, .btn-users, .btn-logout {
+  .btn-print, .btn-reset, .btn-users, .btn-logout, .btn-edit-mode {
     border: none;
     padding: 6px 12px;
     border-radius: 6px;
@@ -178,13 +178,19 @@
   }
   .btn-print { background: var(--amber); color: white; }
   .btn-print:hover { background: var(--amber-lt); }
-  .btn-reset, .btn-users, .btn-logout {
+  .btn-reset, .btn-users, .btn-logout, .btn-edit-mode {
     background: rgba(255,255,255,0.12);
     color: white;
     border: 1px solid rgba(255,255,255,0.28);
     font-weight: 700;
   }
-  .btn-reset:hover, .btn-users:hover, .btn-logout:hover { background: rgba(255,255,255,0.22); }
+  .btn-reset:hover, .btn-users:hover, .btn-logout:hover, .btn-edit-mode:hover { background: rgba(255,255,255,0.22); }
+  .btn-edit-mode.active {
+    background: var(--amber);
+    border-color: var(--amber-lt);
+    color: white;
+  }
+  .btn-edit-mode.active:hover { background: var(--amber-lt); }
 
   /* ── TABLE ──────────────────────────────────────────────────── */
   .table-scroll {
@@ -263,10 +269,11 @@
     padding: 2px 3px;
     border-radius: 3px;
     margin-bottom: 2px;
-    transition: background 0.12s;
+    transition: background 0.12s, border-color 0.12s;
     line-height: 1.35;
     user-select: none;
     position: relative;
+    border: 1px solid transparent;
   }
   li.task:hover { background: rgba(0,0,0,0.06); }
   li.task:active { background: rgba(0,0,0,0.1); }
@@ -276,6 +283,30 @@
     text-decoration-color: var(--done-line);
     text-decoration-thickness: 1.5px;
   }
+
+  /* ── EDIT MODE ──────────────────────────────────────────────────
+     When editors toggle "✎ Modifier", every task becomes a tappable
+     edit target. A global class on <body> drives the styling so the
+     rendering logic stays simple. */
+  body.edit-mode li.task {
+    background: rgba(255, 220, 120, 0.25);
+    border-color: rgba(200, 140, 0, 0.55);
+    cursor: pointer;
+  }
+  body.edit-mode li.task.done {
+    background: rgba(255, 220, 120, 0.18);
+  }
+  body.edit-mode li.task::before {
+    content: '✎';
+    color: #B57800;
+    font-weight: 900;
+    font-size: 8pt;
+    margin-right: 1px;
+    flex-shrink: 0;
+    line-height: 1.35;
+  }
+  .btn-add-task { display: none; }
+  body.edit-mode .btn-add-task { display: block; }
 
   .chk {
     width: 10px; height: 10px; min-width: 10px;
@@ -293,36 +324,21 @@
 
   .task-text { font-size: 7.3pt; line-height: 1.3; flex: 1; }
 
-  .task-menu-btn {
-    background: none;
-    border: none;
-    font-size: 10pt;
-    line-height: 1;
-    color: #666;
-    cursor: pointer;
-    padding: 0 3px;
-    opacity: 0;
-    transition: opacity 0.15s;
-    flex-shrink: 0;
-  }
-  li.task:hover .task-menu-btn { opacity: 1; }
-  .task-menu-btn:hover { color: var(--navy); }
-
   .btn-add-task {
-    display: block;
     width: 100%;
-    margin-top: 3px;
-    padding: 3px;
-    border: 1px dashed var(--border);
-    background: transparent;
-    border-radius: 3px;
+    margin-top: 4px;
+    padding: 5px;
+    border: 1.5px dashed rgba(200, 140, 0, 0.5);
+    background: rgba(255, 220, 120, 0.15);
+    border-radius: 4px;
     font-family: 'Nunito', sans-serif;
-    font-size: 7pt;
-    color: #888;
+    font-size: 7.5pt;
+    font-weight: 700;
+    color: #B57800;
     cursor: pointer;
     transition: all 0.15s;
   }
-  .btn-add-task:hover { border-color: var(--navy); color: var(--navy); background: rgba(255,255,255,0.5); }
+  .btn-add-task:hover { background: rgba(255, 220, 120, 0.4); color: var(--navy); }
 
   /* ── LEGEND ─────────────────────────────────────────────────── */
   .legend {
@@ -363,7 +379,21 @@
     padding: 28px 26px;
     max-width: 360px;
     width: 100%;
+    position: relative;
   }
+  .gate-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    background: none;
+    border: none;
+    font-size: 22pt;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 4px 10px;
+  }
+  .gate-close:hover { color: #333; }
   .gate-card h2 {
     font-family: 'Playfair Display', serif;
     font-size: 18pt;
@@ -577,11 +607,8 @@
     .sync-badge, .progress-badge, .user-chip { font-size: 7pt; padding: 3px 8px; }
     .progress-fill { width: 45px; }
     .task-text { font-size: 9pt; }
-    .task-menu-btn {
-      opacity: 1;
-      font-size: 14pt;
-      padding: 2px 8px;
-    }
+    .task-menu { min-width: 180px; }
+    .task-menu button { padding: 12px 14px; font-size: 10pt; }
     li.task { padding: 5px 4px; margin-bottom: 3px; }
     .chk { width: 14px; height: 14px; min-width: 14px; }
     li.task.done .chk::after { font-size: 10px; }
@@ -624,10 +651,11 @@
 <body>
 
 <!-- ═══ LOGIN GATE ════════════════════════════════════════════════ -->
-<div class="gate-backdrop" id="login-gate">
+<div class="gate-backdrop hidden" id="login-gate">
   <div class="gate-card">
+    <button type="button" class="gate-close" id="gate-close" onclick="closeLoginGate()" aria-label="Fermer">×</button>
     <h2>Planning BAFA</h2>
-    <div class="gate-sub">Connectez-vous pour accéder au planning</div>
+    <div class="gate-sub">Connectez-vous pour modifier le planning</div>
     <form id="login-form">
       <div class="gate-field">
         <label for="login-user">Identifiant</label>
@@ -720,6 +748,8 @@
         <span id="user-name"></span>
         <span class="user-role" id="user-role-label"></span>
       </div>
+      <button class="btn-users" id="btn-login" style="display:none" onclick="openLoginGate()">🔒 <span class="btn-label">Se connecter</span></button>
+      <button class="btn-edit-mode" id="btn-edit-mode" style="display:none" onclick="toggleEditMode()">✎ <span class="btn-label">Modifier</span></button>
       <button class="btn-users" id="btn-users" style="display:none" onclick="openUsersModal()">👥 <span class="btn-label">Utilisateurs</span></button>
       <button class="btn-reset" id="btn-reset" style="display:none" onclick="resetAll()">↺ <span class="btn-label">Réinitialiser</span></button>
       <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
@@ -739,7 +769,7 @@
     <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
     <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
     <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
-    <span class="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
+    <span class="legend-tip" id="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
   </div>
 
 </div>

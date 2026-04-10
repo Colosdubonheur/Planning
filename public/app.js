@@ -18,6 +18,7 @@ let pollTimer = null;
 let failCount = 0;
 let isSyncing = false;
 let lastVersion = 0;
+let editMode = false;     // true = editors have tap-to-edit, + Ajouter visible
 
 // ── UTILS ──────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -75,40 +76,75 @@ async function login(user, password) {
 async function logout() {
   try { await apiFetch(API_LOGOUT, { method: 'POST' }); } catch {}
   currentUser = null;
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-  showLoginGate();
+  await startPublic();
 }
 
-function showLoginGate() {
+function openLoginGate() {
   $('login-gate').classList.remove('hidden');
-  $('user-chip').style.display = 'none';
-  $('btn-users').style.display = 'none';
-  $('btn-reset').style.display = 'none';
-  $('btn-logout').style.display = 'none';
   $('login-error').textContent = '';
   $('login-user').value = '';
   $('login-password').value = '';
   setTimeout(() => $('login-user').focus(), 50);
 }
 
-function hideLoginGate() {
+function closeLoginGate() {
   $('login-gate').classList.add('hidden');
 }
 
+// Alias for backwards compatibility
+function showLoginGate() { openLoginGate(); }
+function hideLoginGate() { closeLoginGate(); }
+
 function applyUserUI() {
-  if (!currentUser) return;
+  const tip = $('legend-tip');
+  if (!currentUser) {
+    // Public / read-only mode
+    $('user-chip').style.display = 'none';
+    $('btn-users').style.display = 'none';
+    $('btn-reset').style.display = 'none';
+    $('btn-logout').style.display = 'none';
+    $('btn-edit-mode').style.display = 'none';
+    $('btn-login').style.display = '';
+    editMode = false;
+    document.body.classList.remove('edit-mode');
+    if (tip) tip.textContent = '👁 Lecture seule — connectez-vous pour modifier';
+    return;
+  }
+  $('btn-login').style.display = 'none';
   $('user-chip').style.display = '';
   $('user-name').textContent = currentUser.user;
   const roleLabel = currentUser.role === 'editor' ? 'Éditeur' : 'Validateur';
   $('user-role-label').textContent = roleLabel;
   $('btn-logout').style.display = '';
   if (currentUser.role === 'editor') {
+    $('btn-edit-mode').style.display = '';
     $('btn-users').style.display = '';
     $('btn-reset').style.display = '';
+    $('btn-edit-mode').classList.toggle('active', editMode);
+    document.body.classList.toggle('edit-mode', editMode);
+    if (tip) {
+      tip.textContent = editMode
+        ? '✎ Mode édition — tapez un item pour le modifier'
+        : '💡 Cliquez un item pour le cocher · « ✎ Modifier » pour éditer';
+    }
   } else {
+    $('btn-edit-mode').style.display = 'none';
     $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
+    editMode = false;
+    document.body.classList.remove('edit-mode');
+    if (tip) tip.textContent = '💡 Cliquez un item pour le cocher';
   }
+}
+
+function toggleEditMode() {
+  if (!currentUser || currentUser.role !== 'editor') return;
+  editMode = !editMode;
+  document.body.classList.toggle('edit-mode', editMode);
+  $('btn-edit-mode').classList.toggle('active', editMode);
+  applyUserUI();
+  renderPlanning();
+  setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
 }
 
 // ── PROGRESS ───────────────────────────────────────────────────
@@ -169,17 +205,14 @@ function renderPlanning() {
         html += '<ul class="tasks">';
         for (const t of cellTasks) {
           const doneCls = t.done ? ' done' : '';
-          const menuBtn = isEditor
-            ? `<button class="task-menu-btn" data-action="menu" data-task-id="${escapeHtml(t.id)}" type="button" aria-label="Actions">⋯</button>`
-            : '';
           html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
             <span class="chk"></span>
             <span class="task-text">${escapeHtml(t.text)}</span>
-            ${menuBtn}
           </li>`;
         }
         html += '</ul>';
         if (isEditor) {
+          // "+ Ajouter" is shown/hidden purely by CSS (body.edit-mode)
           html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
         }
       }
@@ -196,12 +229,6 @@ function renderPlanning() {
 
 // ── EVENT DELEGATION ───────────────────────────────────────────
 function onTableClick(e) {
-  const menuBtn = e.target.closest('[data-action="menu"]');
-  if (menuBtn) {
-    e.stopPropagation();
-    openTaskMenu(menuBtn.dataset.taskId, menuBtn);
-    return;
-  }
   const addBtn = e.target.closest('[data-action="add"]');
   if (addBtn) {
     e.stopPropagation();
@@ -209,8 +236,13 @@ function onTableClick(e) {
     return;
   }
   const li = e.target.closest('li.task');
-  if (li) {
-    const taskId = li.dataset.taskId;
+  if (!li) return;
+  const taskId = li.dataset.taskId;
+  if (editMode && currentUser && currentUser.role === 'editor') {
+    // In edit mode, a tap on any task opens the action menu anchored to it.
+    e.stopPropagation();
+    openTaskMenu(taskId, li);
+  } else {
     toggleTask(taskId, li);
   }
 }
@@ -232,7 +264,9 @@ async function pushOp(op) {
   } catch (e) {
     failCount++;
     if (e.status === 401) {
-      showLoginGate();
+      currentUser = null;
+      applyUserUI();
+      openLoginGate();
     } else if (e.status === 403) {
       setSyncStatus('error', 'Permission refusée');
     } else {
@@ -247,6 +281,11 @@ async function pushOp(op) {
 }
 
 async function toggleTask(taskId, li) {
+  if (!currentUser) {
+    // Public / read-only mode — invite the user to log in.
+    openLoginGate();
+    return;
+  }
   const task = currentState && currentState.tasks.find((t) => t.id === taskId);
   if (!task) return;
   const nextDone = !task.done;
@@ -271,13 +310,23 @@ function closeTaskMenu() {
 
 function openTaskMenu(taskId, anchor) {
   closeTaskMenu();
+  const task = currentState && currentState.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  const column = currentState.tasks
+    .filter((t) => t.dayId === task.dayId && t.slotId === task.slotId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = column.findIndex((t) => t.id === taskId);
+  const canUp = idx > 0;
+  const canDown = idx >= 0 && idx < column.length - 1;
+
   const menu = document.createElement('div');
   menu.className = 'task-menu';
-  menu.innerHTML = `
-    <button type="button" data-menu-action="rename">✎ Renommer</button>
-    <button type="button" data-menu-action="move">→ Déplacer</button>
-    <button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>
-  `;
+  let html = '<button type="button" data-menu-action="rename">✎ Renommer</button>';
+  if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
+  if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
+  html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
+  html += '<button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>';
+  menu.innerHTML = html;
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
   menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
@@ -287,16 +336,20 @@ function openTaskMenu(taskId, anchor) {
   )) + 'px';
   openMenuEl = menu;
 
-  menu.addEventListener('click', (e) => {
+  menu.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-menu-action]');
     if (!btn) return;
     const action = btn.dataset.menuAction;
     closeTaskMenu();
-    const task = currentState.tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    if (action === 'rename') openEditModal(task);
-    else if (action === 'move') openMoveModal(task);
-    else if (action === 'remove') confirmRemove(task);
+    const t = currentState.tasks.find((x) => x.id === taskId);
+    if (!t) return;
+    if (action === 'rename') openEditModal(t);
+    else if (action === 'move') openMoveModal(t);
+    else if (action === 'remove') confirmRemove(t);
+    else if (action === 'up' || action === 'down') {
+      try { await pushOp({ op: 'reorder', taskId, direction: action }); }
+      catch (err) { alert(err.message || 'Erreur'); }
+    }
   });
 }
 
@@ -305,12 +358,12 @@ document.addEventListener('click', (e) => {
 });
 
 // ── EDIT MODAL (rename + move + add) ───────────────────────────
-let editMode = null; // 'rename' | 'move' | 'add'
+let modalMode = null; // 'rename' | 'move' | 'add'
 let editTaskId = null;
 let editAddContext = null; // { dayId, slotId }
 
 function openEditModal(task) {
-  editMode = 'rename';
+  modalMode = 'rename';
   editTaskId = task.id;
   $('edit-modal-title').textContent = 'Renommer la tâche';
   $('edit-text').value = task.text;
@@ -321,7 +374,7 @@ function openEditModal(task) {
 }
 
 function openMoveModal(task) {
-  editMode = 'move';
+  modalMode = 'move';
   editTaskId = task.id;
   $('edit-modal-title').textContent = 'Déplacer la tâche';
   $('edit-text').value = task.text;
@@ -333,7 +386,7 @@ function openMoveModal(task) {
 }
 
 function openAddTaskModal(dayId, slotId) {
-  editMode = 'add';
+  modalMode = 'add';
   editTaskId = null;
   editAddContext = { dayId, slotId };
   $('edit-modal-title').textContent = 'Nouvelle tâche';
@@ -371,7 +424,7 @@ function populateLocationSelects(dayId, slotId) {
 function closeEditModal() {
   $('edit-modal').classList.add('hidden');
   $('edit-text').disabled = false;
-  editMode = null;
+  modalMode = null;
   editTaskId = null;
   editAddContext = null;
 }
@@ -381,15 +434,15 @@ async function submitEditModal() {
   const errEl = $('edit-error');
   errEl.textContent = '';
   try {
-    if (editMode === 'rename') {
+    if (modalMode === 'rename') {
       if (!text) { errEl.textContent = 'Texte vide'; return; }
       await pushOp({ op: 'edit', taskId: editTaskId, text });
-    } else if (editMode === 'add') {
+    } else if (modalMode === 'add') {
       if (!text) { errEl.textContent = 'Texte vide'; return; }
       const dayId = $('edit-day').value;
       const slotId = $('edit-slot').value;
       await pushOp({ op: 'add', dayId, slotId, text });
-    } else if (editMode === 'move') {
+    } else if (modalMode === 'move') {
       const dayId = $('edit-day').value;
       const slotId = $('edit-slot').value;
       await pushOp({ op: 'move', taskId: editTaskId, dayId, slotId });
@@ -510,12 +563,10 @@ async function poll() {
       renderPlanning();
     }
     failCount = 0;
-    setSyncStatus('ok', 'En ligne ✓');
+    setSyncStatus('ok', currentUser ? 'En ligne ✓' : 'Lecture seule');
   } catch (e) {
-    if (e.status === 401) {
-      showLoginGate();
-      return;
-    }
+    // GET /api/state is public now, so a 401 here means the server is
+    // misconfigured — just treat it as a transient error.
     failCount++;
     if (failCount >= 3) setSyncStatus('offline', 'Hors ligne');
   }
@@ -531,10 +582,22 @@ async function startAuthenticated() {
     setSyncStatus('ok', 'En ligne ✓');
     failCount = 0;
   } catch (e) {
-    if (e.status === 401) {
-      showLoginGate();
-      return;
-    }
+    setSyncStatus('offline', 'Hors ligne');
+  }
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+async function startPublic() {
+  currentUser = null;
+  hideLoginGate();
+  applyUserUI();
+  setSyncStatus('syncing', 'Chargement…');
+  try {
+    await fetchState();
+    setSyncStatus('ok', 'Lecture seule');
+    failCount = 0;
+  } catch (e) {
     setSyncStatus('offline', 'Hors ligne');
   }
   if (pollTimer) clearInterval(pollTimer);
@@ -577,7 +640,7 @@ async function init() {
   if (me) {
     await startAuthenticated();
   } else {
-    showLoginGate();
+    await startPublic();
   }
 }
 
@@ -592,5 +655,8 @@ window.submitNewUser = submitNewUser;
 window.closeEditModal = closeEditModal;
 window.resetAll = resetAll;
 window.logout = logout;
+window.openLoginGate = openLoginGate;
+window.closeLoginGate = closeLoginGate;
+window.toggleEditMode = toggleEditMode;
 
 window.addEventListener('DOMContentLoaded', init);
