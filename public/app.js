@@ -18,6 +18,7 @@ let pollTimer = null;
 let failCount = 0;
 let isSyncing = false;
 let lastVersion = 0;
+let editMode = false;     // true = editors have tap-to-edit, + Ajouter visible
 
 // ── UTILS ──────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -102,7 +103,10 @@ function applyUserUI() {
     $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
     $('btn-logout').style.display = 'none';
+    $('btn-edit-mode').style.display = 'none';
     $('btn-login').style.display = '';
+    editMode = false;
+    document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '👁 Lecture seule — connectez-vous pour modifier';
     return;
   }
@@ -113,14 +117,34 @@ function applyUserUI() {
   $('user-role-label').textContent = roleLabel;
   $('btn-logout').style.display = '';
   if (currentUser.role === 'editor') {
+    $('btn-edit-mode').style.display = '';
     $('btn-users').style.display = '';
     $('btn-reset').style.display = '';
-    if (tip) tip.textContent = '💡 Cliquez un item pour cocher · « ⋯ » pour éditer';
+    $('btn-edit-mode').classList.toggle('active', editMode);
+    document.body.classList.toggle('edit-mode', editMode);
+    if (tip) {
+      tip.textContent = editMode
+        ? '✎ Mode édition — tapez un item pour le modifier'
+        : '💡 Cliquez un item pour le cocher · « ✎ Modifier » pour éditer';
+    }
   } else {
+    $('btn-edit-mode').style.display = 'none';
     $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
+    editMode = false;
+    document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '💡 Cliquez un item pour le cocher';
   }
+}
+
+function toggleEditMode() {
+  if (!currentUser || currentUser.role !== 'editor') return;
+  editMode = !editMode;
+  document.body.classList.toggle('edit-mode', editMode);
+  $('btn-edit-mode').classList.toggle('active', editMode);
+  applyUserUI();
+  renderPlanning();
+  setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
 }
 
 // ── PROGRESS ───────────────────────────────────────────────────
@@ -181,18 +205,14 @@ function renderPlanning() {
         html += '<ul class="tasks">';
         for (const t of cellTasks) {
           const doneCls = t.done ? ' done' : '';
-          const menuCls = isEditor ? ' has-menu' : '';
-          const menuBtn = isEditor
-            ? `<button class="task-menu-btn" data-action="menu" data-task-id="${escapeHtml(t.id)}" type="button" aria-label="Actions">⋯</button>`
-            : '';
-          html += `<li class="task${doneCls}${menuCls}" data-task-id="${escapeHtml(t.id)}">
+          html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
             <span class="chk"></span>
             <span class="task-text">${escapeHtml(t.text)}</span>
-            ${menuBtn}
           </li>`;
         }
         html += '</ul>';
         if (isEditor) {
+          // "+ Ajouter" is shown/hidden purely by CSS (body.edit-mode)
           html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
         }
       }
@@ -209,12 +229,6 @@ function renderPlanning() {
 
 // ── EVENT DELEGATION ───────────────────────────────────────────
 function onTableClick(e) {
-  const menuBtn = e.target.closest('[data-action="menu"]');
-  if (menuBtn) {
-    e.stopPropagation();
-    openTaskMenu(menuBtn.dataset.taskId, menuBtn);
-    return;
-  }
   const addBtn = e.target.closest('[data-action="add"]');
   if (addBtn) {
     e.stopPropagation();
@@ -222,8 +236,13 @@ function onTableClick(e) {
     return;
   }
   const li = e.target.closest('li.task');
-  if (li) {
-    const taskId = li.dataset.taskId;
+  if (!li) return;
+  const taskId = li.dataset.taskId;
+  if (editMode && currentUser && currentUser.role === 'editor') {
+    // In edit mode, a tap on any task opens the action menu anchored to it.
+    e.stopPropagation();
+    openTaskMenu(taskId, li);
+  } else {
     toggleTask(taskId, li);
   }
 }
@@ -339,12 +358,12 @@ document.addEventListener('click', (e) => {
 });
 
 // ── EDIT MODAL (rename + move + add) ───────────────────────────
-let editMode = null; // 'rename' | 'move' | 'add'
+let modalMode = null; // 'rename' | 'move' | 'add'
 let editTaskId = null;
 let editAddContext = null; // { dayId, slotId }
 
 function openEditModal(task) {
-  editMode = 'rename';
+  modalMode = 'rename';
   editTaskId = task.id;
   $('edit-modal-title').textContent = 'Renommer la tâche';
   $('edit-text').value = task.text;
@@ -355,7 +374,7 @@ function openEditModal(task) {
 }
 
 function openMoveModal(task) {
-  editMode = 'move';
+  modalMode = 'move';
   editTaskId = task.id;
   $('edit-modal-title').textContent = 'Déplacer la tâche';
   $('edit-text').value = task.text;
@@ -367,7 +386,7 @@ function openMoveModal(task) {
 }
 
 function openAddTaskModal(dayId, slotId) {
-  editMode = 'add';
+  modalMode = 'add';
   editTaskId = null;
   editAddContext = { dayId, slotId };
   $('edit-modal-title').textContent = 'Nouvelle tâche';
@@ -405,7 +424,7 @@ function populateLocationSelects(dayId, slotId) {
 function closeEditModal() {
   $('edit-modal').classList.add('hidden');
   $('edit-text').disabled = false;
-  editMode = null;
+  modalMode = null;
   editTaskId = null;
   editAddContext = null;
 }
@@ -415,15 +434,15 @@ async function submitEditModal() {
   const errEl = $('edit-error');
   errEl.textContent = '';
   try {
-    if (editMode === 'rename') {
+    if (modalMode === 'rename') {
       if (!text) { errEl.textContent = 'Texte vide'; return; }
       await pushOp({ op: 'edit', taskId: editTaskId, text });
-    } else if (editMode === 'add') {
+    } else if (modalMode === 'add') {
       if (!text) { errEl.textContent = 'Texte vide'; return; }
       const dayId = $('edit-day').value;
       const slotId = $('edit-slot').value;
       await pushOp({ op: 'add', dayId, slotId, text });
-    } else if (editMode === 'move') {
+    } else if (modalMode === 'move') {
       const dayId = $('edit-day').value;
       const slotId = $('edit-slot').value;
       await pushOp({ op: 'move', taskId: editTaskId, dayId, slotId });
@@ -638,5 +657,6 @@ window.resetAll = resetAll;
 window.logout = logout;
 window.openLoginGate = openLoginGate;
 window.closeLoginGate = closeLoginGate;
+window.toggleEditMode = toggleEditMode;
 
 window.addEventListener('DOMContentLoaded', init);

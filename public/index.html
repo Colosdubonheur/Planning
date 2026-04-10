@@ -163,7 +163,7 @@
     text-transform: uppercase;
   }
 
-  .btn-print, .btn-reset, .btn-users, .btn-logout {
+  .btn-print, .btn-reset, .btn-users, .btn-logout, .btn-edit-mode {
     border: none;
     padding: 6px 12px;
     border-radius: 6px;
@@ -178,13 +178,19 @@
   }
   .btn-print { background: var(--amber); color: white; }
   .btn-print:hover { background: var(--amber-lt); }
-  .btn-reset, .btn-users, .btn-logout {
+  .btn-reset, .btn-users, .btn-logout, .btn-edit-mode {
     background: rgba(255,255,255,0.12);
     color: white;
     border: 1px solid rgba(255,255,255,0.28);
     font-weight: 700;
   }
-  .btn-reset:hover, .btn-users:hover, .btn-logout:hover { background: rgba(255,255,255,0.22); }
+  .btn-reset:hover, .btn-users:hover, .btn-logout:hover, .btn-edit-mode:hover { background: rgba(255,255,255,0.22); }
+  .btn-edit-mode.active {
+    background: var(--amber);
+    border-color: var(--amber-lt);
+    color: white;
+  }
+  .btn-edit-mode.active:hover { background: var(--amber-lt); }
 
   /* ── TABLE ──────────────────────────────────────────────────── */
   .table-scroll {
@@ -263,10 +269,11 @@
     padding: 2px 3px;
     border-radius: 3px;
     margin-bottom: 2px;
-    transition: background 0.12s;
+    transition: background 0.12s, border-color 0.12s;
     line-height: 1.35;
     user-select: none;
     position: relative;
+    border: 1px solid transparent;
   }
   li.task:hover { background: rgba(0,0,0,0.06); }
   li.task:active { background: rgba(0,0,0,0.1); }
@@ -276,8 +283,30 @@
     text-decoration-color: var(--done-line);
     text-decoration-thickness: 1.5px;
   }
-  /* Editors: reserve space for the absolute-positioned menu button */
-  li.task.has-menu { padding-right: 26px; }
+
+  /* ── EDIT MODE ──────────────────────────────────────────────────
+     When editors toggle "✎ Modifier", every task becomes a tappable
+     edit target. A global class on <body> drives the styling so the
+     rendering logic stays simple. */
+  body.edit-mode li.task {
+    background: rgba(255, 220, 120, 0.25);
+    border-color: rgba(200, 140, 0, 0.55);
+    cursor: pointer;
+  }
+  body.edit-mode li.task.done {
+    background: rgba(255, 220, 120, 0.18);
+  }
+  body.edit-mode li.task::before {
+    content: '✎';
+    color: #B57800;
+    font-weight: 900;
+    font-size: 8pt;
+    margin-right: 1px;
+    flex-shrink: 0;
+    line-height: 1.35;
+  }
+  .btn-add-task { display: none; }
+  body.edit-mode .btn-add-task { display: block; }
 
   .chk {
     width: 10px; height: 10px; min-width: 10px;
@@ -295,50 +324,21 @@
 
   .task-text { font-size: 7.3pt; line-height: 1.3; flex: 1; }
 
-  .task-menu-btn {
-    position: absolute;
-    top: 2px;
-    right: 2px;
-    background: rgba(0,0,0,0.08);
-    border: 1px solid rgba(0,0,0,0.1);
-    font-size: 9pt;
-    font-weight: 900;
-    line-height: 1;
-    color: #555;
-    cursor: pointer;
-    padding: 2px 5px;
-    border-radius: 4px;
-    opacity: 0;
-    transition: opacity 0.15s, background 0.15s;
-  }
-  li.task:hover .task-menu-btn { opacity: 1; }
-  .task-menu-btn:hover { background: rgba(0,0,0,0.18); color: var(--navy); }
-  /* Touch devices (phone, tablet): always show the button — no :hover there */
-  @media (hover: none) {
-    .task-menu-btn {
-      opacity: 1;
-      font-size: 11pt;
-      padding: 3px 7px;
-      background: rgba(0,0,0,0.1);
-    }
-    li.task.has-menu { padding-right: 32px; }
-  }
-
   .btn-add-task {
-    display: block;
     width: 100%;
-    margin-top: 3px;
-    padding: 3px;
-    border: 1px dashed var(--border);
-    background: transparent;
-    border-radius: 3px;
+    margin-top: 4px;
+    padding: 5px;
+    border: 1.5px dashed rgba(200, 140, 0, 0.5);
+    background: rgba(255, 220, 120, 0.15);
+    border-radius: 4px;
     font-family: 'Nunito', sans-serif;
-    font-size: 7pt;
-    color: #888;
+    font-size: 7.5pt;
+    font-weight: 700;
+    color: #B57800;
     cursor: pointer;
     transition: all 0.15s;
   }
-  .btn-add-task:hover { border-color: var(--navy); color: var(--navy); background: rgba(255,255,255,0.5); }
+  .btn-add-task:hover { background: rgba(255, 220, 120, 0.4); color: var(--navy); }
 
   /* ── LEGEND ─────────────────────────────────────────────────── */
   .legend {
@@ -749,6 +749,7 @@
         <span class="user-role" id="user-role-label"></span>
       </div>
       <button class="btn-users" id="btn-login" style="display:none" onclick="openLoginGate()">🔒 <span class="btn-label">Se connecter</span></button>
+      <button class="btn-edit-mode" id="btn-edit-mode" style="display:none" onclick="toggleEditMode()">✎ <span class="btn-label">Modifier</span></button>
       <button class="btn-users" id="btn-users" style="display:none" onclick="openUsersModal()">👥 <span class="btn-label">Utilisateurs</span></button>
       <button class="btn-reset" id="btn-reset" style="display:none" onclick="resetAll()">↺ <span class="btn-label">Réinitialiser</span></button>
       <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
