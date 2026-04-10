@@ -309,4 +309,138 @@ function updateProgress() {
   if (txt) txt.textContent = done + ' / ' + all;
 }
 
-// === PART 1 END — render/ops/modals/init defined in later parts ===
+// ── RENDER ─────────────────────────────────────────────────────
+function renderPlanning() {
+  const table = $('planning-table');
+  if (!currentState) {
+    if (table) table.innerHTML = '';
+    updateProgress();
+    return;
+  }
+  closeTaskMenu();
+
+  const { days, slots, tasks } = currentState;
+  const isEditor = currentUser && currentUser.role === 'editor';
+  if (!table) return;
+
+  // Header row
+  let html = '<thead><tr class="col-headers"><th class="corner"></th>';
+  for (const d of days) {
+    const cls = d.weekend ? 'weekend' : '';
+    html += `<th class="${cls}">
+      <span class="day-j">${escapeHtml(d.short || '')}</span>
+      <span class="day-name">${escapeHtml(d.name || '')}</span>
+      <span class="day-date">${escapeHtml(d.date || '')}</span>
+    </th>`;
+  }
+  html += '</tr></thead><tbody>';
+
+  // Body rows, one per slot
+  for (const slot of slots) {
+    const rowClass = 'row-' + slot.id;
+    const slotCls = 'sl-' + slot.id;
+    html += `<tr class="${rowClass}"><td class="slot-label ${slotCls}">${escapeHtml(slot.label)}</td>`;
+    for (const d of days) {
+      html += `<td class="cell" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}">`;
+      if (slot.id === 'repas') {
+        html += '<div class="repas-content">🍽&nbsp;Repas</div>';
+      } else {
+        const cellTasks = tasks
+          .filter((t) => t.dayId === d.id && t.slotId === slot.id)
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        html += '<ul class="tasks">';
+        for (const t of cellTasks) {
+          const doneCls = t.done ? ' done' : '';
+          html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
+            <span class="chk"></span>
+            <span class="task-text">${escapeHtml(t.text)}</span>
+          </li>`;
+        }
+        html += '</ul>';
+        if (isEditor) {
+          html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
+        }
+      }
+      html += '</td>';
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  updateProgress();
+  lastVersion = currentState.version || 0;
+}
+
+// ── EVENT DELEGATION ───────────────────────────────────────────
+function onTableClick(e) {
+  const addBtn = e.target.closest('[data-action="add"]');
+  if (addBtn) {
+    e.stopPropagation();
+    openAddTaskModal(addBtn.dataset.day, addBtn.dataset.slot);
+    return;
+  }
+  const li = e.target.closest('li.task');
+  if (!li) return;
+  const taskId = li.dataset.taskId;
+  if (editMode && currentUser && currentUser.role === 'editor') {
+    e.stopPropagation();
+    openTaskMenu(taskId, li);
+  } else {
+    toggleTask(taskId, li);
+  }
+}
+
+// ── OPS ────────────────────────────────────────────────────────
+async function pushOp(op) {
+  if (!currentPlanningId) {
+    setSyncStatus('error', 'Aucun planning sélectionné');
+    throw new Error('Aucun planning sélectionné');
+  }
+  setSyncStatus('syncing', 'Sauvegarde…');
+  isSyncing = true;
+  try {
+    const next = await apiFetch(withPlanning(API_STATE), {
+      method: 'POST',
+      body: JSON.stringify({ ...op, planningId: currentPlanningId }),
+    });
+    currentState = next;
+    renderPlanning();
+    failCount = 0;
+    setSyncStatus('ok', 'Synchronisé ✓');
+    return next;
+  } catch (e) {
+    failCount++;
+    if (e.status === 401) {
+      currentUser = null;
+      applyUserUI();
+      openLoginGate();
+    } else if (e.status === 403) {
+      setSyncStatus('error', 'Permission refusée');
+    } else {
+      setSyncStatus('error', 'Erreur de sync');
+    }
+    renderPlanning();
+    throw e;
+  } finally {
+    isSyncing = false;
+  }
+}
+
+async function toggleTask(taskId, li) {
+  if (!currentUser) {
+    openLoginGate();
+    return;
+  }
+  const task = currentState && currentState.tasks.find((t) => t.id === taskId);
+  if (!task) return;
+  const nextDone = !task.done;
+  if (li) li.classList.toggle('done', nextDone);
+  try {
+    await pushOp({ op: 'toggle', taskId, done: nextDone });
+  } catch {
+    /* rolled back by renderPlanning in pushOp catch */
+  }
+}
+
+// === PART 2 END — task menu / modals / users modal / init in 3-4 ===
