@@ -635,6 +635,54 @@
   .planning-picker button:hover { background: rgba(255,255,255,0.3); }
   .planning-picker button.danger:hover { background: rgba(220,80,80,0.6); }
 
+  /* Empty state when no planning is accessible */
+  .empty-state {
+    padding: 60px 24px 70px;
+    text-align: center;
+    color: var(--text);
+  }
+  .empty-state.hidden { display: none; }
+  .empty-state-icon {
+    font-size: 56px;
+    line-height: 1;
+    margin-bottom: 14px;
+    opacity: 0.85;
+  }
+  .empty-state h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 20pt;
+    color: var(--navy);
+    margin-bottom: 8px;
+  }
+  .empty-state p {
+    font-size: 10pt;
+    color: #666;
+    max-width: 420px;
+    margin: 0 auto 22px;
+    line-height: 1.55;
+  }
+  .empty-state-btn {
+    background: var(--navy);
+    color: white;
+    border: none;
+    padding: 12px 22px;
+    border-radius: 8px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 11pt;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(27,58,92,0.3);
+    transition: background 0.15s, transform 0.1s;
+  }
+  .empty-state-btn:hover { background: var(--blue-ac); }
+  .empty-state-btn:active { transform: translateY(1px); }
+  .empty-state-btn.disabled,
+  .empty-state-btn:disabled {
+    background: #B0BBC8;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
   /* Toast (copy-link confirmation, etc.) */
   .toast {
     position: fixed;
@@ -784,13 +832,14 @@
     <div class="modal-field">
       <label for="new-user-role">Rôle</label>
       <select id="new-user-role">
-        <option value="validator">Validateur (coche uniquement)</option>
-        <option value="editor">Éditeur (modifie les plannings + crée ses sous-utilisateurs)</option>
+        <option value="validator">Validateur (coche les tâches uniquement)</option>
+        <option value="editor">Éditeur (modifie les plannings, crée ses propres plannings et sous-utilisateurs)</option>
       </select>
     </div>
     <div class="modal-field">
-      <label>Plannings initiaux</label>
+      <label>Plannings initiaux <span style="font-weight:500;color:#888">(optionnel)</span></label>
       <ul class="planning-access-list" id="new-user-plannings"></ul>
+      <p style="font-size:7.5pt;color:#666;margin-top:4px;line-height:1.4">💡 Laissez vide pour créer un éditeur indépendant qui gérera ses propres plannings. Vous pourrez aussi lui donner accès plus tard.</p>
     </div>
     <div class="modal-error" id="users-error"></div>
     <div class="modal-actions">
@@ -910,8 +959,16 @@
     </div>
   </div>
 
+  <!-- EMPTY STATE (shown when the user has no accessible planning) -->
+  <div id="empty-state" class="empty-state hidden">
+    <div class="empty-state-icon">📋</div>
+    <h2>Aucun planning</h2>
+    <p id="empty-state-message">Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.</p>
+    <button type="button" class="empty-state-btn" id="empty-state-create" onclick="createPlanningPrompt()">＋ Créer un planning</button>
+  </div>
+
   <!-- TABLE -->
-  <div class="table-scroll">
+  <div class="table-scroll" id="table-scroll">
     <table id="planning-table"></table>
   </div>
 

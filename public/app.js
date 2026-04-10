@@ -194,6 +194,7 @@ function applyUserUI() {
     editMode = false;
     document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '👁 Lecture seule — connectez-vous pour modifier';
+    refreshEmptyState();
     return;
   }
   $('btn-login').style.display = 'none';
@@ -231,6 +232,7 @@ function applyUserUI() {
     document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '💡 Cliquez un item pour le cocher';
   }
+  refreshEmptyState();
 }
 
 function toggleEditMode() {
@@ -283,6 +285,39 @@ function renderPlanningSelector() {
   const canOwn = current && currentUser && current.ownerId === currentUser.user;
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
+
+  refreshEmptyState();
+}
+
+// Toggle the empty-state card vs the planning table.  Three cases:
+//   - logged-in editor with no planning  → empty card with create button
+//   - logged-in validator with no planning → empty card explaining they need
+//     an editor to grant them access
+//   - anonymous viewer with no planning   → invite to log in
+function refreshEmptyState() {
+  const empty = $('empty-state');
+  const tableWrap = $('table-scroll');
+  const msg = $('empty-state-message');
+  const btn = $('empty-state-create');
+  if (!empty || !tableWrap) return;
+  const showEmpty = !currentPlanningId;
+  empty.classList.toggle('hidden', !showEmpty);
+  tableWrap.style.display = showEmpty ? 'none' : '';
+  if (!showEmpty) return;
+
+  if (!currentUser) {
+    msg.textContent = 'Connectez-vous pour accéder à vos plannings, ou ouvrez un lien de partage en lecture seule.';
+    btn.style.display = 'none';
+    return;
+  }
+  if (currentUser.role === 'editor') {
+    msg.textContent = "Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.";
+    btn.style.display = '';
+    btn.disabled = false;
+  } else {
+    msg.textContent = "Aucun planning ne vous a été attribué. Demandez à votre administrateur de vous donner accès à un planning existant.";
+    btn.style.display = 'none';
+  }
 }
 
 async function onPlanningSelectChange(id) {
