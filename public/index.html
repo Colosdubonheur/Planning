@@ -670,38 +670,6 @@
   }
   .planning-picker button:hover { background: rgba(255,255,255,0.3); }
   .planning-picker button.danger:hover { background: rgba(220,80,80,0.6); }
-  .planning-picker button.toggle.active {
-    background: rgba(255,255,255,0.42);
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.6);
-  }
-  .planning-picker .hidden-count {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .planning-picker .hidden-count::after {
-    content: attr(data-count);
-    position: absolute;
-    top: -4px;
-    right: -6px;
-    background: #FFD84D;
-    color: #222;
-    font-size: 6pt;
-    font-weight: 900;
-    border-radius: 8px;
-    padding: 1px 4px;
-    min-width: 10px;
-    text-align: center;
-    line-height: 1.2;
-    pointer-events: none;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
-  }
-  .planning-picker .hidden-count[data-count="0"]::after { display: none; }
-  .planning-picker select option.hidden-option {
-    color: #888;
-    font-style: italic;
-  }
 
   /* Empty state when no planning is accessible */
   .empty-state {
@@ -782,7 +750,7 @@
     background: #F7F9FC;
     border: 1px solid var(--border);
     border-radius: 5px;
-    max-height: 120px;
+    max-height: 160px;
     overflow-y: auto;
   }
   .planning-access-list li {
@@ -794,6 +762,30 @@
     border-bottom: none;
   }
   .planning-access-list input[type="checkbox"] { margin: 0; }
+  .planning-access-list li.unassigned label { color: #666; }
+  .planning-access-list li.access-toggle-row {
+    padding-top: 4px;
+    margin-top: 2px;
+    border-top: 1px dashed var(--border);
+  }
+  .planning-access-list .access-toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--navy);
+    cursor: pointer;
+    font-family: 'Nunito', sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    padding: 2px 4px;
+    text-align: left;
+    width: 100%;
+  }
+  .planning-access-list .access-toggle-btn:hover { text-decoration: underline; }
+  .planning-access-list .access-empty {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+  }
 
   /* ── RESPONSIVE (mobile) ────────────────────────────────────── */
   @media (max-width: 720px) {
@@ -1010,8 +1002,6 @@
         <select id="planning-select" onchange="onPlanningSelectChange(this.value)"></select>
         <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
-        <button type="button" id="btn-hide-planning" title="Masquer ce planning de la liste (il reste accessible)" onclick="toggleHideCurrentPlanning()">🙈</button>
-        <button type="button" id="btn-show-hidden" class="toggle hidden-count" data-count="0" title="Afficher les plannings masqués" onclick="toggleShowHiddenPlannings()">👁</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
       </div>

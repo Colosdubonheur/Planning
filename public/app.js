@@ -12,8 +12,6 @@ const API_USERS     = '/api/users';
 const API_PLANNINGS = '/api/plannings';
 const POLL_MS = 2000;
 const STORAGE_PLANNING_KEY = 'planning:currentId';
-const STORAGE_HIDDEN_PREFIX = 'planning:hidden:'; // + username
-const STORAGE_SHOW_HIDDEN_PREFIX = 'planning:showHidden:'; // + username
 
 // ── STATE ──────────────────────────────────────────────────────
 let currentState    = null;  // { days, slots, tasks, version, lastUpdated, planningId, planningName }
@@ -25,8 +23,10 @@ let failCount       = 0;
 let isSyncing       = false;
 let lastVersion     = 0;
 let editMode        = false;
-let hiddenPlanningIds = new Set(); // ids the current user has collapsed from view
-let showHiddenPlannings = false;   // reveal hidden ones in the picker
+// Per-user expand state in the "Gestion des utilisateurs" modal: by default
+// each user row only shows the plannings they're assigned to; expanding a
+// row reveals the unassigned ones so the admin can grant new access.
+const expandedUserPlannings = new Set();
 
 // ── UTILS ──────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -138,112 +138,6 @@ async function sharePlanningUrl() {
 
 function readStoredPlanningId() {
   try { return localStorage.getItem(STORAGE_PLANNING_KEY); } catch { return null; }
-}
-
-// ── HIDDEN PLANNINGS (per-user collapse list) ─────────────────
-// Stored in localStorage, scoped by username, so each user of a shared
-// browser keeps their own list.  Purely client-side — the back-end has
-// no notion of hidden plannings; they're just folded out of the UI.
-function hiddenStorageKey() {
-  if (!currentUser || !currentUser.user) return null;
-  return STORAGE_HIDDEN_PREFIX + currentUser.user;
-}
-
-function showHiddenStorageKey() {
-  if (!currentUser || !currentUser.user) return null;
-  return STORAGE_SHOW_HIDDEN_PREFIX + currentUser.user;
-}
-
-function loadHiddenPlannings() {
-  hiddenPlanningIds = new Set();
-  showHiddenPlannings = false;
-  const key = hiddenStorageKey();
-  if (!key) return;
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        for (const id of parsed) {
-          if (typeof id === 'string') hiddenPlanningIds.add(id);
-        }
-      }
-    }
-  } catch {}
-  try {
-    const raw = localStorage.getItem(showHiddenStorageKey());
-    showHiddenPlannings = raw === '1';
-  } catch {}
-}
-
-function persistHiddenPlannings() {
-  const key = hiddenStorageKey();
-  if (!key) return;
-  try {
-    localStorage.setItem(key, JSON.stringify(Array.from(hiddenPlanningIds)));
-  } catch {}
-}
-
-function persistShowHidden() {
-  const key = showHiddenStorageKey();
-  if (!key) return;
-  try {
-    localStorage.setItem(key, showHiddenPlannings ? '1' : '0');
-  } catch {}
-}
-
-// Keep the hidden set pruned to ids that still exist so stale entries
-// don't accumulate over time.
-function pruneHiddenPlannings() {
-  if (!hiddenPlanningIds.size) return;
-  const known = new Set(planningsList.map((p) => p.id));
-  let changed = false;
-  for (const id of Array.from(hiddenPlanningIds)) {
-    if (!known.has(id)) {
-      hiddenPlanningIds.delete(id);
-      changed = true;
-    }
-  }
-  if (changed) persistHiddenPlannings();
-}
-
-// Hide or unhide the currently-selected planning from the picker.  The
-// user keeps access; the planning is just folded out of their default
-// view.  When the active planning is hidden we automatically switch to
-// the first visible one (or turn show-hidden on so the user isn't stuck
-// on a blank picker).
-async function toggleHideCurrentPlanning() {
-  if (!currentPlanningId) return;
-  if (hiddenPlanningIds.has(currentPlanningId)) {
-    hiddenPlanningIds.delete(currentPlanningId);
-    persistHiddenPlannings();
-    renderPlanningSelector();
-    showToast('Planning à nouveau visible');
-    return;
-  }
-  hiddenPlanningIds.add(currentPlanningId);
-  persistHiddenPlannings();
-  // If show-hidden is off, switch to the first non-hidden planning so
-  // the user isn't looking at something that's no longer in the list.
-  if (!showHiddenPlannings) {
-    const firstVisible = planningsList.find(
-      (p) => p.id !== currentPlanningId && !hiddenPlanningIds.has(p.id)
-    );
-    if (firstVisible) {
-      await onPlanningSelectChange(firstVisible.id);
-    } else {
-      renderPlanningSelector();
-    }
-  } else {
-    renderPlanningSelector();
-  }
-  showToast('Planning masqué');
-}
-
-function toggleShowHiddenPlannings() {
-  showHiddenPlannings = !showHiddenPlannings;
-  persistShowHidden();
-  renderPlanningSelector();
 }
 
 // ── AUTH ───────────────────────────────────────────────────────
@@ -419,100 +313,30 @@ function renderPlanningSelector() {
   const sel = $('planning-select');
   if (!sel) return;
   sel.innerHTML = '';
-  pruneHiddenPlannings();
-
-  // Work out which planning rows should appear in the <select>.
-  // - "show hidden" off  → only visible plannings, plus the current one
-  //   even if hidden (otherwise the dropdown would be out of sync with
-  //   what's actually displayed).
-  // - "show hidden" on   → everything, hidden ones marked with a prefix.
-  const visibleIds = new Set();
-  if (showHiddenPlannings) {
-    for (const p of planningsList) visibleIds.add(p.id);
-  } else {
-    for (const p of planningsList) {
-      if (!hiddenPlanningIds.has(p.id)) visibleIds.add(p.id);
-    }
-    if (currentPlanningId) visibleIds.add(currentPlanningId);
-  }
-
   if (!planningsList.length) {
     const opt = document.createElement('option');
     opt.value = '';
     opt.textContent = '(aucun)';
     sel.appendChild(opt);
   } else {
-    let hadOptions = false;
     for (const p of planningsList) {
-      if (!visibleIds.has(p.id)) continue;
       const opt = document.createElement('option');
       opt.value = p.id;
-      const isHidden = hiddenPlanningIds.has(p.id);
-      opt.textContent = isHidden ? `(masqué) ${p.name}` : p.name;
-      if (isHidden) opt.className = 'hidden-option';
+      opt.textContent = p.name;
       if (p.id === currentPlanningId) opt.selected = true;
-      sel.appendChild(opt);
-      hadOptions = true;
-    }
-    if (!hadOptions) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '(tous masqués)';
       sel.appendChild(opt);
     }
   }
-
   const current = planningsList.find((p) => p.id === currentPlanningId);
-  const hiddenCount = planningsList.reduce(
-    (n, p) => n + (hiddenPlanningIds.has(p.id) ? 1 : 0),
-    0
-  );
-  const visibleCount = planningsList.length - hiddenCount;
-
   $('planning-title').textContent = current ? current.name : 'Planning';
-  const countParts = [];
-  countParts.push(`${visibleCount} visible${visibleCount > 1 ? 's' : ''}`);
-  if (hiddenCount > 0) countParts.push(`${hiddenCount} masqué${hiddenCount > 1 ? 's' : ''}`);
   $('planning-subtitle').textContent = current
-    ? `Planning synchronisé · ${countParts.join(' · ')}`
+    ? `Planning synchronisé · ${planningsList.length} disponible${planningsList.length > 1 ? 's' : ''}`
     : 'Aucun planning accessible';
 
   // Only the owner may rename/delete.
   const canOwn = current && currentUser && current.ownerId === currentUser.user;
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
-
-  // Hide-planning button: label changes based on current state.  Only
-  // available to authenticated users who actually have something to hide.
-  const hideBtn = $('btn-hide-planning');
-  if (hideBtn) {
-    if (!currentUser || !current) {
-      hideBtn.style.display = 'none';
-    } else {
-      hideBtn.style.display = '';
-      const hidden = hiddenPlanningIds.has(currentPlanningId);
-      hideBtn.textContent = hidden ? '👁‍🗨' : '🙈';
-      hideBtn.title = hidden
-        ? 'Afficher ce planning dans la liste'
-        : 'Masquer ce planning de la liste (il reste accessible)';
-    }
-  }
-
-  // Show-hidden toggle: only shown when there's something hidden to reveal
-  // (or when the toggle is already on).  The badge carries the hidden count.
-  const showBtn = $('btn-show-hidden');
-  if (showBtn) {
-    if (!currentUser || (hiddenCount === 0 && !showHiddenPlannings)) {
-      showBtn.style.display = 'none';
-    } else {
-      showBtn.style.display = '';
-      showBtn.setAttribute('data-count', String(hiddenCount));
-      showBtn.classList.toggle('active', showHiddenPlannings);
-      showBtn.title = showHiddenPlannings
-        ? `Replier les plannings masqués (${hiddenCount})`
-        : `Afficher les plannings masqués (${hiddenCount})`;
-    }
-  }
 
   refreshEmptyState();
 }
@@ -1155,6 +979,8 @@ async function openUsersModal() {
   $('new-user-role').value = 'formateur';
   const autoCb = $('new-user-auto');
   if (autoCb) autoCb.checked = false;
+  // Reset the per-row expand state so the modal always opens in compact mode.
+  expandedUserPlannings.clear();
 
   // Gate the role dropdown + auto-assign section on master status.
   // Non-masters can only create formateurs so the dropdown is redundant.
@@ -1217,6 +1043,16 @@ function renderNewUserPlanningPicker() {
 function getSelectedNewUserPlannings() {
   const boxes = document.querySelectorAll('#new-user-plannings input[type="checkbox"]:checked');
   return Array.from(boxes).map((b) => b.value);
+}
+
+// Toggle a user row's "expand" state in the users modal.  Collapsed rows
+// only show the user's currently-assigned plannings; expanding reveals the
+// unassigned ones so the admin can grant access to more plannings without
+// leaving the modal.
+function toggleUserPlannings(user) {
+  if (expandedUserPlannings.has(user)) expandedUserPlannings.delete(user);
+  else expandedUserPlannings.add(user);
+  refreshUsersList();
 }
 
 async function refreshUsersList() {
@@ -1353,14 +1189,35 @@ async function refreshUsersList() {
       }
       li.appendChild(header);
 
-      // Planning access checkboxes for this user — only plannings visible to
-      // the caller are listed.  The caller can't toggle their own access.
+      // Planning access checkboxes.  By default the row is "collapsed" and
+      // only shows plannings this user is actually assigned to so the modal
+      // stays readable once the structure accumulates dozens of them.  A
+      // little "Afficher les N autres" button expands the row and reveals
+      // the unassigned plannings as greyed-out checkboxes the admin can
+      // click to grant access.
       if (planningsList.length) {
         const access = document.createElement('ul');
         access.className = 'planning-access-list';
-        for (const p of planningsList) {
+        const assignedSet = new Set(
+          Array.isArray(u.plannings) ? u.plannings : []
+        );
+        const expanded = expandedUserPlannings.has(u.user);
+        const visiblePlannings = expanded
+          ? planningsList
+          : planningsList.filter((p) => assignedSet.has(p.id));
+        const hiddenCount = planningsList.length - visiblePlannings.length;
+
+        if (visiblePlannings.length === 0) {
+          const empty = document.createElement('li');
+          empty.className = 'access-empty';
+          empty.textContent = "Aucun planning affecté.";
+          access.appendChild(empty);
+        }
+
+        for (const p of visiblePlannings) {
           const row = document.createElement('li');
-          const has = Array.isArray(u.plannings) && u.plannings.includes(p.id);
+          const has = assignedSet.has(p.id);
+          if (!has) row.className = 'unassigned';
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = has;
@@ -1373,10 +1230,12 @@ async function refreshUsersList() {
                   method: 'POST',
                   body: JSON.stringify({ planningId: p.id }),
                 });
+                row.classList.remove('unassigned');
               } else {
                 await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}/plannings/${encodeURIComponent(p.id)}`, {
                   method: 'DELETE',
                 });
+                row.classList.add('unassigned');
               }
               $('users-error').textContent = '';
             } catch (e) {
@@ -1395,6 +1254,23 @@ async function refreshUsersList() {
           row.appendChild(label);
           access.appendChild(row);
         }
+
+        // Expand / collapse toggle.  Only useful when there's actually
+        // something to fold or unfold.
+        if (expanded || hiddenCount > 0) {
+          const toggleRow = document.createElement('li');
+          toggleRow.className = 'access-toggle-row';
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'access-toggle-btn';
+          btn.textContent = expanded
+            ? '− Replier (afficher uniquement les plannings affectés)'
+            : `+ Afficher les ${hiddenCount} autre${hiddenCount > 1 ? 's' : ''} planning${hiddenCount > 1 ? 's' : ''}`;
+          btn.addEventListener('click', () => toggleUserPlannings(u.user));
+          toggleRow.appendChild(btn);
+          access.appendChild(toggleRow);
+        }
+
         li.appendChild(access);
       }
 
@@ -1470,24 +1346,19 @@ async function poll() {
 }
 
 // Pick the active planning given the list the user has access to.
-// Priority: URL ?planning=<id> > stored id > first visible (non-hidden) > first in list.
-// Hidden plannings are honored only when no visible planning exists so
-// users aren't stranded with an empty picker.
+// Priority: URL ?planning=<id> > stored id > first in list.
 function pickInitialPlanningId(list) {
   const urlId = new URLSearchParams(window.location.search).get('planning');
   const stored = readStoredPlanningId();
   const ids = list.map((p) => p.id);
   if (urlId && ids.includes(urlId)) return urlId;
   if (stored && ids.includes(stored)) return stored;
-  const firstVisible = list.find((p) => !hiddenPlanningIds.has(p.id));
-  if (firstVisible) return firstVisible.id;
   return list[0] ? list[0].id : null;
 }
 
 // ── INIT ───────────────────────────────────────────────────────
 async function startAuthenticated() {
   hideLoginGate();
-  loadHiddenPlannings();
   applyUserUI();
   setSyncStatus('syncing', 'Connexion…');
   try {
@@ -1518,8 +1389,6 @@ async function startAuthenticated() {
 async function startPublic() {
   currentUser = null;
   planningsList = [];
-  hiddenPlanningIds = new Set();
-  showHiddenPlannings = false;
   hideLoginGate();
   applyUserUI();
   setSyncStatus('syncing', 'Chargement…');
@@ -1618,8 +1487,7 @@ window.openUsersModal        = openUsersModal;
 window.closeUsersModal       = closeUsersModal;
 window.submitNewUser         = submitNewUser;
 window.onNewUserRoleChange   = onNewUserRoleChange;
-window.toggleHideCurrentPlanning = toggleHideCurrentPlanning;
-window.toggleShowHiddenPlannings = toggleShowHiddenPlannings;
+window.toggleUserPlannings   = toggleUserPlannings;
 window.closeEditModal        = closeEditModal;
 window.resetAll              = resetAll;
 window.logout                = logout;
