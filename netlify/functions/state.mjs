@@ -223,9 +223,16 @@ export default async (req) => {
     const meta = await getPlanningMeta(planningId);
     if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
 
+    // Owner override: whoever created the planning has full editing rights
+    // on it, even if their global role is "validator".  Other users keep
+    // their global role (validator = tick-only, editor = full).
+    const effectiveActor = meta.ownerId === actor.user
+      ? { ...actor, role: "editor" }
+      : actor;
+
     try {
       const next = await updatePlanningState(planningId, (state) => {
-        return applyOp(state, body, actor);
+        return applyOp(state, body, effectiveActor);
       });
       return json({ ...next, planningId, planningName: meta.name });
     } catch (e) {

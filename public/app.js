@@ -203,15 +203,21 @@ function applyUserUI() {
   const roleLabel = currentUser.role === 'editor' ? 'Éditeur' : 'Validateur';
   $('user-role-label').textContent = roleLabel;
   $('btn-logout').style.display = '';
-  if (picker) picker.style.display = planningsList.length ? '' : '';
+  if (picker) picker.style.display = '';
   // Share button is available to anyone logged in, regardless of role.
   $('btn-share-planning').style.display = currentPlanningId ? '' : 'none';
 
-  if (currentUser.role === 'editor') {
+  // Creating a new planning is open to everyone — the creator becomes its
+  // owner and gets full editing rights on it.  Managing sub-users remains
+  // gated by the global editor role (validators don't see the 👥 button).
+  $('btn-new-planning').style.display = '';
+  $('btn-users').style.display = canManageUsers() ? '' : 'none';
+
+  // Per-planning actions depend on the current planning's ownership: owners
+  // always get the editor UI, even if their global role is "validator".
+  if (canEditCurrentPlanning()) {
     $('btn-edit-mode').style.display = '';
-    $('btn-users').style.display = '';
     $('btn-reset').style.display = '';
-    $('btn-new-planning').style.display = '';
     $('btn-rename-planning').style.display = '';
     $('btn-delete-planning').style.display = '';
     $('btn-edit-mode').classList.toggle('active', editMode);
@@ -223,9 +229,7 @@ function applyUserUI() {
     }
   } else {
     $('btn-edit-mode').style.display = 'none';
-    $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
-    $('btn-new-planning').style.display = 'none';
     $('btn-rename-planning').style.display = 'none';
     $('btn-delete-planning').style.display = 'none';
     editMode = false;
@@ -236,13 +240,28 @@ function applyUserUI() {
 }
 
 function toggleEditMode() {
-  if (!currentUser || currentUser.role !== 'editor') return;
+  if (!canEditCurrentPlanning()) return;
   editMode = !editMode;
   document.body.classList.toggle('edit-mode', editMode);
   $('btn-edit-mode').classList.toggle('active', editMode);
   applyUserUI();
   renderPlanning();
   setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
+}
+
+// Can the current user edit the currently selected planning?  True if they
+// are a global editor OR if they own the current planning (owner override).
+function canEditCurrentPlanning() {
+  if (!currentUser) return false;
+  if (currentUser.role === 'editor') return true;
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  return !!(current && current.ownerId === currentUser.user);
+}
+
+// Can the current user create sub-users?  Global editor role only (the
+// users-management UI is not exposed to validators).
+function canManageUsers() {
+  return !!(currentUser && currentUser.role === 'editor');
 }
 
 // ── PLANNINGS (list, create, rename, delete, switch) ───────────
@@ -310,14 +329,11 @@ function refreshEmptyState() {
     btn.style.display = 'none';
     return;
   }
-  if (currentUser.role === 'editor') {
-    msg.textContent = "Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.";
-    btn.style.display = '';
-    btn.disabled = false;
-  } else {
-    msg.textContent = "Aucun planning ne vous a été attribué. Demandez à votre administrateur de vous donner accès à un planning existant.";
-    btn.style.display = 'none';
-  }
+  // Everyone can create a planning now — the creator becomes its owner and
+  // gets full editing rights on it regardless of their global role.
+  msg.textContent = "Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.";
+  btn.style.display = '';
+  btn.disabled = false;
 }
 
 async function onPlanningSelectChange(id) {
@@ -325,6 +341,9 @@ async function onPlanningSelectChange(id) {
   rememberPlanningId(id);
   await fetchState();
   renderPlanningSelector();
+  // Re-evaluate UI because ownership (and therefore editing rights) depends
+  // on which planning is active.
+  applyUserUI();
   setSyncStatus('ok', 'En ligne ✓');
 }
 
@@ -614,7 +633,7 @@ function renderPlanning() {
   closeTaskMenu();
 
   const { days, slots, tasks } = currentState;
-  const isEditor = currentUser && currentUser.role === 'editor';
+  const isEditor = canEditCurrentPlanning();
   if (!table) return;
 
   // Header row
@@ -677,7 +696,7 @@ function onTableClick(e) {
   const li = e.target.closest('li.task');
   if (!li) return;
   const taskId = li.dataset.taskId;
-  if (editMode && currentUser && currentUser.role === 'editor') {
+  if (editMode && canEditCurrentPlanning()) {
     e.stopPropagation();
     openTaskMenu(taskId, li);
   } else {
@@ -1128,7 +1147,9 @@ async function startAuthenticated() {
       currentState = null;
       $('planning-table').innerHTML = '';
       updateProgress();
-      setSyncStatus('ok', 'Aucun planning — créez-en un');
+      // The big empty-state card carries the call-to-action; the sync badge
+      // just states the current condition.
+      setSyncStatus('ok', 'En ligne ✓');
     }
     failCount = 0;
   } catch (e) {

@@ -41,11 +41,10 @@ export default async (req) => {
       return json({ plannings: list });
     }
 
-    // POST /api/plannings — create a new planning (editors only)
+    // POST /api/plannings — create a new planning.  Any authenticated user
+    // can create one; they become its owner and therefore get full editing
+    // rights on that specific planning regardless of their global role.
     if (req.method === "POST" && !planningId) {
-      if (actor.role !== "editor") {
-        return json({ error: "Seuls les éditeurs peuvent créer un planning" }, { status: 403 });
-      }
       let body;
       try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
       const { name, startDate, dayCount } = body || {};
@@ -70,22 +69,16 @@ export default async (req) => {
         return json({ planning: meta });
       }
 
-      // PATCH /api/plannings/:id — rename (owner only)
+      // PATCH /api/plannings/:id — rename (owner only, enforced in lib)
       if (req.method === "PATCH" || req.method === "PUT") {
-        if (actor.role !== "editor") {
-          return json({ error: "Seuls les éditeurs peuvent renommer" }, { status: 403 });
-        }
         let body;
         try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
         const updated = await renamePlanning(planningId, body && body.name, actor.user);
         return json({ planning: updated });
       }
 
-      // DELETE /api/plannings/:id — delete (owner only)
+      // DELETE /api/plannings/:id — delete (owner only, enforced in lib)
       if (req.method === "DELETE") {
-        if (actor.role !== "editor") {
-          return json({ error: "Seuls les éditeurs peuvent supprimer" }, { status: 403 });
-        }
         await deletePlanning(planningId, actor.user);
         return json({ ok: true });
       }
