@@ -1,27 +1,40 @@
 // ═══════════════════════════════════════════════════════════════
-//   Planning BAFA — Frontend
-//   Dynamic rendering, authentication, role-based editing, realtime sync
+//   Planning BAFA — Frontend (multi-planning + hiérarchie)
+//   Dynamic rendering, auth, role-based editing, realtime sync
 // ═══════════════════════════════════════════════════════════════
 
 // ── CONFIG ─────────────────────────────────────────────────────
-const API_STATE = '/api/state';
-const API_LOGIN = '/api/auth/login';
-const API_LOGOUT = '/api/auth/logout';
-const API_ME = '/api/auth/me';
-const API_USERS = '/api/users';
+const API_STATE     = '/api/state';
+const API_LOGIN     = '/api/auth/login';
+const API_LOGOUT    = '/api/auth/logout';
+const API_ME        = '/api/auth/me';
+const API_USERS     = '/api/users';
+const API_PLANNINGS = '/api/plannings';
 const POLL_MS = 2000;
+const STORAGE_PLANNING_KEY = 'planning:currentId';
 
 // ── STATE ──────────────────────────────────────────────────────
-let currentState = null;  // { days, slots, tasks, version, lastUpdated }
-let currentUser = null;   // { user, role }
-let pollTimer = null;
-let failCount = 0;
-let isSyncing = false;
-let lastVersion = 0;
-let editMode = false;     // true = editors have tap-to-edit, + Ajouter visible
+let currentState    = null;  // { days, slots, tasks, version, lastUpdated, planningId, planningName }
+let currentUser     = null;  // { user, role }
+let currentPlanningId = null;
+let planningsList   = [];    // [{ id, name, ownerId, createdAt, lastUpdated }]
+let pollTimer       = null;
+let failCount       = 0;
+let isSyncing       = false;
+let lastVersion     = 0;
+let editMode        = false;
 
 // ── UTILS ──────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function setSyncStatus(status, label) {
   const badge = $('sync-badge');
@@ -52,13 +65,32 @@ async function apiFetch(url, options = {}) {
   return data;
 }
 
+function withPlanning(url, planningId) {
+  const id = planningId || currentPlanningId;
+  if (!id) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}planning=${encodeURIComponent(id)}`;
+}
+
+function rememberPlanningId(id) {
+  currentPlanningId = id;
+  try {
+    if (id) localStorage.setItem(STORAGE_PLANNING_KEY, id);
+    else localStorage.removeItem(STORAGE_PLANNING_KEY);
+  } catch {}
+}
+
+function readStoredPlanningId() {
+  try { return localStorage.getItem(STORAGE_PLANNING_KEY); } catch { return null; }
+}
+
 // ── AUTH ───────────────────────────────────────────────────────
 async function loadMe() {
   try {
     const me = await apiFetch(API_ME);
     currentUser = me;
     return me;
-  } catch (e) {
+  } catch {
     currentUser = null;
     return null;
   }
@@ -76,6 +108,8 @@ async function login(user, password) {
 async function logout() {
   try { await apiFetch(API_LOGOUT, { method: 'POST' }); } catch {}
   currentUser = null;
+  planningsList = [];
+  rememberPlanningId(null);
   await startPublic();
 }
 
@@ -91,20 +125,20 @@ function closeLoginGate() {
   $('login-gate').classList.add('hidden');
 }
 
-// Alias for backwards compatibility
 function showLoginGate() { openLoginGate(); }
 function hideLoginGate() { closeLoginGate(); }
 
 function applyUserUI() {
   const tip = $('legend-tip');
+  const picker = $('planning-picker');
   if (!currentUser) {
-    // Public / read-only mode
     $('user-chip').style.display = 'none';
     $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
     $('btn-logout').style.display = 'none';
     $('btn-edit-mode').style.display = 'none';
     $('btn-login').style.display = '';
+    if (picker) picker.style.display = 'none';
     editMode = false;
     document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '👁 Lecture seule — connectez-vous pour modifier';
@@ -116,10 +150,14 @@ function applyUserUI() {
   const roleLabel = currentUser.role === 'editor' ? 'Éditeur' : 'Validateur';
   $('user-role-label').textContent = roleLabel;
   $('btn-logout').style.display = '';
+  if (picker) picker.style.display = planningsList.length ? '' : '';
   if (currentUser.role === 'editor') {
     $('btn-edit-mode').style.display = '';
     $('btn-users').style.display = '';
     $('btn-reset').style.display = '';
+    $('btn-new-planning').style.display = '';
+    $('btn-rename-planning').style.display = '';
+    $('btn-delete-planning').style.display = '';
     $('btn-edit-mode').classList.toggle('active', editMode);
     document.body.classList.toggle('edit-mode', editMode);
     if (tip) {
@@ -131,6 +169,9 @@ function applyUserUI() {
     $('btn-edit-mode').style.display = 'none';
     $('btn-users').style.display = 'none';
     $('btn-reset').style.display = 'none';
+    $('btn-new-planning').style.display = 'none';
+    $('btn-rename-planning').style.display = 'none';
+    $('btn-delete-planning').style.display = 'none';
     editMode = false;
     document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '💡 Cliquez un item pour le cocher';
@@ -147,516 +188,125 @@ function toggleEditMode() {
   setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
 }
 
-// ── PROGRESS ───────────────────────────────────────────────────
-function updateProgress() {
-  if (!currentState) return;
-  const all = currentState.tasks.length;
-  const done = currentState.tasks.filter((t) => t.done).length;
-  const pct = all ? Math.round((done / all) * 100) : 0;
-  const bar = $('progress-bar');
-  const txt = $('progress-text');
-  if (bar) bar.style.width = pct + '%';
-  if (txt) txt.textContent = done + ' / ' + all;
+// ── PLANNINGS (list, create, rename, delete, switch) ───────────
+async function loadPlanningsList() {
+  if (!currentUser) { planningsList = []; return planningsList; }
+  try {
+    const data = await apiFetch(API_PLANNINGS);
+    planningsList = Array.isArray(data.plannings) ? data.plannings : [];
+  } catch (e) {
+    planningsList = [];
+  }
+  return planningsList;
 }
 
-// ── RENDER ─────────────────────────────────────────────────────
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderPlanning() {
-  if (!currentState) return;
-  closeTaskMenu();
-
-  const { days, slots, tasks } = currentState;
-  const isEditor = currentUser && currentUser.role === 'editor';
-  const table = $('planning-table');
-
-  // Header row
-  let html = '<thead><tr class="col-headers"><th class="corner"></th>';
-  for (const d of days) {
-    const cls = d.weekend ? 'weekend' : '';
-    html += `<th class="${cls}">
-      <span class="day-j">${escapeHtml(d.short || '')}</span>
-      <span class="day-name">${escapeHtml(d.name || '')}</span>
-      <span class="day-date">${escapeHtml(d.date || '')}</span>
-    </th>`;
-  }
-  html += '</tr></thead><tbody>';
-
-  // Body rows, one per slot
-  for (const slot of slots) {
-    const rowClass = 'row-' + slot.id;
-    const slotCls = 'sl-' + slot.id;
-    html += `<tr class="${rowClass}"><td class="slot-label ${slotCls}">${escapeHtml(slot.label)}</td>`;
-    for (const d of days) {
-      html += `<td class="cell" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}">`;
-      if (slot.id === 'repas') {
-        html += '<div class="repas-content">🍽&nbsp;Repas</div>';
-      } else {
-        const cellTasks = tasks
-          .filter((t) => t.dayId === d.id && t.slotId === slot.id)
-          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        html += '<ul class="tasks">';
-        for (const t of cellTasks) {
-          const doneCls = t.done ? ' done' : '';
-          html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
-            <span class="chk"></span>
-            <span class="task-text">${escapeHtml(t.text)}</span>
-          </li>`;
-        }
-        html += '</ul>';
-        if (isEditor) {
-          // "+ Ajouter" is shown/hidden purely by CSS (body.edit-mode)
-          html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
-        }
-      }
-      html += '</td>';
-    }
-    html += '</tr>';
-  }
-  html += '</tbody>';
-  table.innerHTML = html;
-
-  updateProgress();
-  lastVersion = currentState.version || 0;
-}
-
-// ── EVENT DELEGATION ───────────────────────────────────────────
-function onTableClick(e) {
-  const addBtn = e.target.closest('[data-action="add"]');
-  if (addBtn) {
-    e.stopPropagation();
-    openAddTaskModal(addBtn.dataset.day, addBtn.dataset.slot);
-    return;
-  }
-  const li = e.target.closest('li.task');
-  if (!li) return;
-  const taskId = li.dataset.taskId;
-  if (editMode && currentUser && currentUser.role === 'editor') {
-    // In edit mode, a tap on any task opens the action menu anchored to it.
-    e.stopPropagation();
-    openTaskMenu(taskId, li);
+function renderPlanningSelector() {
+  const sel = $('planning-select');
+  if (!sel) return;
+  sel.innerHTML = '';
+  if (!planningsList.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '(aucun)';
+    sel.appendChild(opt);
   } else {
-    toggleTask(taskId, li);
+    for (const p of planningsList) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      if (p.id === currentPlanningId) opt.selected = true;
+      sel.appendChild(opt);
+    }
   }
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  $('planning-title').textContent = current ? current.name : 'Planning';
+  $('planning-subtitle').textContent = current
+    ? `Planning synchronisé · ${planningsList.length} disponible${planningsList.length > 1 ? 's' : ''}`
+    : 'Aucun planning accessible';
+
+  // Only the owner may rename/delete.
+  const canOwn = current && currentUser && current.ownerId === currentUser.user;
+  $('btn-rename-planning').style.display = canOwn ? '' : 'none';
+  $('btn-delete-planning').style.display = canOwn ? '' : 'none';
 }
 
-// ── OPS ────────────────────────────────────────────────────────
-async function pushOp(op) {
-  setSyncStatus('syncing', 'Sauvegarde…');
-  isSyncing = true;
+async function onPlanningSelectChange(id) {
+  if (!id || id === currentPlanningId) return;
+  rememberPlanningId(id);
+  await fetchState();
+  renderPlanningSelector();
+  setSyncStatus('ok', 'En ligne ✓');
+}
+
+async function createPlanningPrompt() {
+  const name = prompt('Nom du nouveau planning :');
+  if (!name || !name.trim()) return;
   try {
-    const next = await apiFetch(API_STATE, {
+    const data = await apiFetch(API_PLANNINGS, {
       method: 'POST',
-      body: JSON.stringify(op),
+      body: JSON.stringify({ name: name.trim() }),
     });
-    currentState = next;
-    renderPlanning();
-    failCount = 0;
-    setSyncStatus('ok', 'Synchronisé ✓');
-    return next;
+    await loadPlanningsList();
+    rememberPlanningId(data.planning.id);
+    await fetchState();
+    renderPlanningSelector();
+    setSyncStatus('ok', 'Planning créé ✓');
   } catch (e) {
-    failCount++;
-    if (e.status === 401) {
-      currentUser = null;
-      applyUserUI();
-      openLoginGate();
-    } else if (e.status === 403) {
-      setSyncStatus('error', 'Permission refusée');
-    } else {
-      setSyncStatus('error', 'Erreur de sync');
-    }
-    // Re-render to roll back optimistic UI changes.
-    renderPlanning();
-    throw e;
-  } finally {
-    isSyncing = false;
+    alert(e.message || 'Erreur lors de la création du planning');
   }
 }
 
-async function toggleTask(taskId, li) {
-  if (!currentUser) {
-    // Public / read-only mode — invite the user to log in.
-    openLoginGate();
-    return;
-  }
-  const task = currentState && currentState.tasks.find((t) => t.id === taskId);
-  if (!task) return;
-  const nextDone = !task.done;
-  // Optimistic UI
-  if (li) li.classList.toggle('done', nextDone);
+async function renamePlanningPrompt() {
+  if (!currentPlanningId) return;
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  const name = prompt('Nouveau nom :', current ? current.name : '');
+  if (!name || !name.trim()) return;
   try {
-    await pushOp({ op: 'toggle', taskId, done: nextDone });
+    await apiFetch(`${API_PLANNINGS}/${encodeURIComponent(currentPlanningId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    await loadPlanningsList();
+    renderPlanningSelector();
+    setSyncStatus('ok', 'Planning renommé ✓');
   } catch (e) {
-    // rolled back by renderPlanning in pushOp catch
+    alert(e.message || 'Erreur lors du renommage');
   }
 }
 
-// ── TASK MENU ──────────────────────────────────────────────────
-let openMenuEl = null;
-
-function closeTaskMenu() {
-  if (openMenuEl && openMenuEl.parentNode) {
-    openMenuEl.parentNode.removeChild(openMenuEl);
-  }
-  openMenuEl = null;
-}
-
-function openTaskMenu(taskId, anchor) {
-  closeTaskMenu();
-  const task = currentState && currentState.tasks.find((t) => t.id === taskId);
-  if (!task) return;
-  const column = currentState.tasks
-    .filter((t) => t.dayId === task.dayId && t.slotId === task.slotId)
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const idx = column.findIndex((t) => t.id === taskId);
-  const canUp = idx > 0;
-  const canDown = idx >= 0 && idx < column.length - 1;
-
-  const menu = document.createElement('div');
-  menu.className = 'task-menu';
-  let html = '<button type="button" data-menu-action="rename">✎ Renommer</button>';
-  if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
-  if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
-  html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
-  html += '<button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>';
-  menu.innerHTML = html;
-  document.body.appendChild(menu);
-  const rect = anchor.getBoundingClientRect();
-  menu.style.top = (window.scrollY + rect.bottom + 4) + 'px';
-  menu.style.left = Math.max(8, Math.min(
-    window.innerWidth - menu.offsetWidth - 8,
-    window.scrollX + rect.left
-  )) + 'px';
-  openMenuEl = menu;
-
-  menu.addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-menu-action]');
-    if (!btn) return;
-    const action = btn.dataset.menuAction;
-    closeTaskMenu();
-    const t = currentState.tasks.find((x) => x.id === taskId);
-    if (!t) return;
-    if (action === 'rename') openEditModal(t);
-    else if (action === 'move') openMoveModal(t);
-    else if (action === 'remove') confirmRemove(t);
-    else if (action === 'up' || action === 'down') {
-      try { await pushOp({ op: 'reorder', taskId, direction: action }); }
-      catch (err) { alert(err.message || 'Erreur'); }
-    }
-  });
-}
-
-document.addEventListener('click', (e) => {
-  if (openMenuEl && !openMenuEl.contains(e.target)) closeTaskMenu();
-});
-
-// ── EDIT MODAL (rename + move + add) ───────────────────────────
-let modalMode = null; // 'rename' | 'move' | 'add'
-let editTaskId = null;
-let editAddContext = null; // { dayId, slotId }
-
-function openEditModal(task) {
-  modalMode = 'rename';
-  editTaskId = task.id;
-  $('edit-modal-title').textContent = 'Renommer la tâche';
-  $('edit-text').value = task.text;
-  $('edit-location').style.display = 'none';
-  $('edit-error').textContent = '';
-  $('edit-modal').classList.remove('hidden');
-  setTimeout(() => $('edit-text').focus(), 50);
-}
-
-function openMoveModal(task) {
-  modalMode = 'move';
-  editTaskId = task.id;
-  $('edit-modal-title').textContent = 'Déplacer la tâche';
-  $('edit-text').value = task.text;
-  $('edit-text').disabled = true;
-  populateLocationSelects(task.dayId, task.slotId);
-  $('edit-location').style.display = '';
-  $('edit-error').textContent = '';
-  $('edit-modal').classList.remove('hidden');
-}
-
-function openAddTaskModal(dayId, slotId) {
-  modalMode = 'add';
-  editTaskId = null;
-  editAddContext = { dayId, slotId };
-  $('edit-modal-title').textContent = 'Nouvelle tâche';
-  $('edit-text').value = '';
-  $('edit-text').disabled = false;
-  populateLocationSelects(dayId, slotId);
-  $('edit-location').style.display = '';
-  $('edit-error').textContent = '';
-  $('edit-modal').classList.remove('hidden');
-  setTimeout(() => $('edit-text').focus(), 50);
-}
-
-function populateLocationSelects(dayId, slotId) {
-  const daySel = $('edit-day');
-  const slotSel = $('edit-slot');
-  daySel.innerHTML = '';
-  for (const d of currentState.days) {
-    const opt = document.createElement('option');
-    opt.value = d.id;
-    opt.textContent = `${d.short || ''} – ${d.name || ''}`;
-    if (d.id === dayId) opt.selected = true;
-    daySel.appendChild(opt);
-  }
-  slotSel.innerHTML = '';
-  for (const s of currentState.slots) {
-    if (s.id === 'repas') continue;
-    const opt = document.createElement('option');
-    opt.value = s.id;
-    opt.textContent = s.label;
-    if (s.id === slotId) opt.selected = true;
-    slotSel.appendChild(opt);
-  }
-}
-
-function closeEditModal() {
-  $('edit-modal').classList.add('hidden');
-  $('edit-text').disabled = false;
-  modalMode = null;
-  editTaskId = null;
-  editAddContext = null;
-}
-
-async function submitEditModal() {
-  const text = $('edit-text').value.trim();
-  const errEl = $('edit-error');
-  errEl.textContent = '';
+async function deletePlanningPrompt() {
+  if (!currentPlanningId) return;
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  const label = current ? current.name : currentPlanningId;
+  if (!confirm(`Supprimer définitivement le planning « ${label} » ? Cette action est irréversible.`)) return;
   try {
-    if (modalMode === 'rename') {
-      if (!text) { errEl.textContent = 'Texte vide'; return; }
-      await pushOp({ op: 'edit', taskId: editTaskId, text });
-    } else if (modalMode === 'add') {
-      if (!text) { errEl.textContent = 'Texte vide'; return; }
-      const dayId = $('edit-day').value;
-      const slotId = $('edit-slot').value;
-      await pushOp({ op: 'add', dayId, slotId, text });
-    } else if (modalMode === 'move') {
-      const dayId = $('edit-day').value;
-      const slotId = $('edit-slot').value;
-      await pushOp({ op: 'move', taskId: editTaskId, dayId, slotId });
-    }
-    closeEditModal();
-  } catch (e) {
-    errEl.textContent = e.message || 'Erreur';
-  }
-}
-
-async function confirmRemove(task) {
-  if (!confirm(`Supprimer définitivement la tâche « ${task.text} » ?`)) return;
-  try {
-    await pushOp({ op: 'remove', taskId: task.id });
+    await apiFetch(`${API_PLANNINGS}/${encodeURIComponent(currentPlanningId)}`, { method: 'DELETE' });
+    rememberPlanningId(null);
+    await loadPlanningsList();
+    if (planningsList.length) rememberPlanningId(planningsList[0].id);
+    if (currentPlanningId) await fetchState();
+    else { currentState = null; $('planning-table').innerHTML = ''; updateProgress(); }
+    renderPlanningSelector();
+    setSyncStatus('ok', 'Planning supprimé ✓');
   } catch (e) {
     alert(e.message || 'Erreur lors de la suppression');
   }
 }
 
-// ── RESET ──────────────────────────────────────────────────────
-async function resetAll() {
-  if (!confirm('Décocher toutes les tâches pour tout le monde ?')) return;
-  try {
-    await pushOp({ op: 'reset' });
-  } catch (e) {
-    alert(e.message || 'Erreur');
+// ── PROGRESS ───────────────────────────────────────────────────
+function updateProgress() {
+  const bar = $('progress-bar');
+  const txt = $('progress-text');
+  if (!currentState) {
+    if (bar) bar.style.width = '0%';
+    if (txt) txt.textContent = '0 / 0';
+    return;
   }
+  const all = currentState.tasks.length;
+  const done = currentState.tasks.filter((t) => t.done).length;
+  const pct = all ? Math.round((done / all) * 100) : 0;
+  if (bar) bar.style.width = pct + '%';
+  if (txt) txt.textContent = done + ' / ' + all;
 }
 
-// ── USERS MODAL ────────────────────────────────────────────────
-async function openUsersModal() {
-  $('users-modal').classList.remove('hidden');
-  $('users-error').textContent = '';
-  $('new-user-name').value = '';
-  $('new-user-pwd').value = '';
-  $('new-user-role').value = 'validator';
-  await refreshUsersList();
-}
-
-function closeUsersModal() {
-  $('users-modal').classList.add('hidden');
-}
-
-async function refreshUsersList() {
-  const listEl = $('users-list');
-  listEl.innerHTML = '<li style="color:#888;justify-content:center">Chargement…</li>';
-  try {
-    const data = await apiFetch(API_USERS);
-    listEl.innerHTML = '';
-    for (const u of data.users) {
-      const li = document.createElement('li');
-      const isSelf = currentUser && u.user === currentUser.user;
-      li.innerHTML = `
-        <span class="u-name">${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : ''}</span>
-        <span class="u-role ${u.role}">${u.role === 'editor' ? 'Éditeur' : 'Validateur'}</span>
-      `;
-      if (!isSelf) {
-        const del = document.createElement('button');
-        del.className = 'u-delete';
-        del.title = 'Supprimer';
-        del.textContent = '🗑';
-        del.addEventListener('click', () => deleteUserAction(u.user));
-        li.appendChild(del);
-      }
-      listEl.appendChild(li);
-    }
-  } catch (e) {
-    listEl.innerHTML = `<li style="color:#D33">${escapeHtml(e.message || 'Erreur')}</li>`;
-  }
-}
-
-async function submitNewUser() {
-  const user = $('new-user-name').value.trim();
-  const password = $('new-user-pwd').value;
-  const role = $('new-user-role').value;
-  const errEl = $('users-error');
-  errEl.textContent = '';
-  try {
-    await apiFetch(API_USERS, {
-      method: 'POST',
-      body: JSON.stringify({ user, password, role }),
-    });
-    $('new-user-name').value = '';
-    $('new-user-pwd').value = '';
-    await refreshUsersList();
-  } catch (e) {
-    errEl.textContent = e.message || 'Erreur';
-  }
-}
-
-async function deleteUserAction(user) {
-  if (!confirm(`Supprimer l'utilisateur « ${user} » ?`)) return;
-  const errEl = $('users-error');
-  errEl.textContent = '';
-  try {
-    await apiFetch(`${API_USERS}/${encodeURIComponent(user)}`, { method: 'DELETE' });
-    await refreshUsersList();
-  } catch (e) {
-    errEl.textContent = e.message || 'Erreur';
-  }
-}
-
-// ── FETCH + POLL ───────────────────────────────────────────────
-async function fetchState() {
-  const state = await apiFetch(API_STATE);
-  currentState = state;
-  lastVersion = state.version || 0;
-  renderPlanning();
-  return state;
-}
-
-async function poll() {
-  if (isSyncing) return;
-  try {
-    const state = await apiFetch(API_STATE);
-    if ((state.version || 0) !== lastVersion) {
-      currentState = state;
-      renderPlanning();
-    }
-    failCount = 0;
-    setSyncStatus('ok', currentUser ? 'En ligne ✓' : 'Lecture seule');
-  } catch (e) {
-    // GET /api/state is public now, so a 401 here means the server is
-    // misconfigured — just treat it as a transient error.
-    failCount++;
-    if (failCount >= 3) setSyncStatus('offline', 'Hors ligne');
-  }
-}
-
-// ── INIT ───────────────────────────────────────────────────────
-async function startAuthenticated() {
-  hideLoginGate();
-  applyUserUI();
-  setSyncStatus('syncing', 'Connexion…');
-  try {
-    await fetchState();
-    setSyncStatus('ok', 'En ligne ✓');
-    failCount = 0;
-  } catch (e) {
-    setSyncStatus('offline', 'Hors ligne');
-  }
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, POLL_MS);
-}
-
-async function startPublic() {
-  currentUser = null;
-  hideLoginGate();
-  applyUserUI();
-  setSyncStatus('syncing', 'Chargement…');
-  try {
-    await fetchState();
-    setSyncStatus('ok', 'Lecture seule');
-    failCount = 0;
-  } catch (e) {
-    setSyncStatus('offline', 'Hors ligne');
-  }
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, POLL_MS);
-}
-
-async function init() {
-  const table = $('planning-table');
-  table.addEventListener('click', onTableClick);
-
-  $('login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const user = $('login-user').value.trim();
-    const password = $('login-password').value;
-    const errEl = $('login-error');
-    const submit = $('login-submit');
-    errEl.textContent = '';
-    submit.disabled = true;
-    submit.textContent = 'Connexion…';
-    try {
-      await login(user, password);
-      await startAuthenticated();
-    } catch (e) {
-      errEl.textContent = e.message || 'Erreur de connexion';
-    } finally {
-      submit.disabled = false;
-      submit.textContent = 'Se connecter';
-    }
-  });
-
-  $('edit-save-btn').addEventListener('click', submitEditModal);
-  $('edit-text').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      submitEditModal();
-    }
-  });
-
-  const me = await loadMe();
-  if (me) {
-    await startAuthenticated();
-  } else {
-    await startPublic();
-  }
-}
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && currentUser) poll();
-});
-
-// Expose functions used by inline onclick handlers
-window.openUsersModal = openUsersModal;
-window.closeUsersModal = closeUsersModal;
-window.submitNewUser = submitNewUser;
-window.closeEditModal = closeEditModal;
-window.resetAll = resetAll;
-window.logout = logout;
-window.openLoginGate = openLoginGate;
-window.closeLoginGate = closeLoginGate;
-window.toggleEditMode = toggleEditMode;
-
-window.addEventListener('DOMContentLoaded', init);
+// === PART 1 END — render/ops/modals/init defined in later parts ===

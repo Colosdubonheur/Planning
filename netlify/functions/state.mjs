@@ -1,7 +1,12 @@
-import { getStore } from "@netlify/blobs";
 import { requireAuth } from "./_lib/auth.mjs";
-import { updateJsonWithCAS } from "./_lib/cas.mjs";
-import { buildInitialState } from "./_lib/seed.mjs";
+import {
+  ensureMigration,
+  getPlanningState,
+  getPlanningMeta,
+  updatePlanningState,
+  listPlanningsForUser,
+  userHasAccess,
+} from "./_lib/plannings.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -14,16 +19,6 @@ function json(body, init = {}) {
 
 function newTaskId() {
   return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function isValidState(s) {
-  return (
-    s &&
-    typeof s === "object" &&
-    Array.isArray(s.days) &&
-    Array.isArray(s.slots) &&
-    Array.isArray(s.tasks)
-  );
 }
 
 function reorderColumn(state, dayId, slotId) {
@@ -103,7 +98,6 @@ function applyOp(state, op, actor) {
       const idx = column.findIndex((t) => t.id === task.id);
       const newIdx = op.direction === "up" ? idx - 1 : idx + 1;
       if (newIdx < 0 || newIdx >= column.length) {
-        // Already at the edge — no-op but still bump version so clients refresh cleanly
         break;
       }
       [column[idx], column[newIdx]] = [column[newIdx], column[idx]];
@@ -145,6 +139,23 @@ function applyOp(state, op, actor) {
 
   state.version = (state.version || 0) + 1;
   state.lastUpdated = Date.now();
+  return state;
+}
+
+// Resolve which planning the request is about.  Priority:
+//   1. ?planning=<id> query parameter
+//   2. op.planningId in POST body
+//   3. For authenticated users: their first accessible planning
+//   4. For anonymous GETs: the first planning in the public list (empty if none)
+async function resolvePlanningId(url, body, actorUser) {
+  const fromQuery = url.searchParams.get("planning");
+  if (fromQuery) return fromQuery;
+  if (body && typeof body.planningId === "string" && body.planningId) return body.planningId;
+  if (actorUser) {
+    const list = await listPlanningsForUser(actorUser);
+    if (list.length) return list[0].id;
+  }
+  return null;
 }
 
 export default async (req) => {
@@ -152,25 +163,29 @@ export default async (req) => {
     return new Response(null, { status: 204, headers: jsonHeaders });
   }
 
-  const store = getStore({ name: "planning", consistency: "strong" });
+  await ensureMigration();
+  const url = new URL(req.url);
 
-  // GET is public (read-only) so the planning can be shared with trainees
-  // without any login. Writes always require auth below.
+  // ── GET /api/state ─────────────────────────────────────────────
+  // Public read: requires an explicit ?planning=<id>.  The frontend passes
+  // the currently selected planning so anonymous viewers can view a shared
+  // link.  (The individual planning is the shareable unit.)
   if (req.method === "GET") {
     try {
-      const result = await store.getWithMetadata("state", { type: "json" });
-      let state = result ? result.data : null;
-      if (!isValidState(state)) {
-        // First boot or legacy format — seed it.
-        state = buildInitialState();
-        await store.set("state", JSON.stringify(state));
+      const planningId = url.searchParams.get("planning");
+      if (!planningId) {
+        return json({ error: "Paramètre 'planning' requis" }, { status: 400 });
       }
-      return json(state);
+      const meta = await getPlanningMeta(planningId);
+      if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
+      const state = await getPlanningState(planningId);
+      return json({ ...state, planningId, planningName: meta.name });
     } catch (e) {
       return json({ error: "Erreur de lecture: " + (e.message || e) }, { status: 500 });
     }
   }
 
+  // ── POST /api/state ────────────────────────────────────────────
   if (req.method === "POST") {
     const auth = requireAuth(req);
     if (auth.error) return auth.error;
@@ -179,18 +194,21 @@ export default async (req) => {
     let body;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
 
+    const planningId = await resolvePlanningId(url, body, actor.user);
+    if (!planningId) return json({ error: "Paramètre 'planning' requis" }, { status: 400 });
+
+    // Access control.
+    const hasAccess = await userHasAccess(actor.user, planningId);
+    if (!hasAccess) return json({ error: "Permission refusée" }, { status: 403 });
+
+    const meta = await getPlanningMeta(planningId);
+    if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
+
     try {
-      const next = await updateJsonWithCAS(
-        store,
-        "state",
-        (current) => {
-          let state = isValidState(current) ? current : buildInitialState();
-          applyOp(state, body, actor);
-          return state;
-        },
-        { fallback: () => buildInitialState() }
-      );
-      return json(next);
+      const next = await updatePlanningState(planningId, (state) => {
+        return applyOp(state, body, actor);
+      });
+      return json({ ...next, planningId, planningName: meta.name });
     } catch (e) {
       const message = e && e.message ? e.message : "Erreur interne";
       const status = /permission|refus/i.test(message) ? 403 : 400;
