@@ -181,10 +181,11 @@ function renderPlanning() {
         html += '<ul class="tasks">';
         for (const t of cellTasks) {
           const doneCls = t.done ? ' done' : '';
+          const menuCls = isEditor ? ' has-menu' : '';
           const menuBtn = isEditor
             ? `<button class="task-menu-btn" data-action="menu" data-task-id="${escapeHtml(t.id)}" type="button" aria-label="Actions">⋯</button>`
             : '';
-          html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
+          html += `<li class="task${doneCls}${menuCls}" data-task-id="${escapeHtml(t.id)}">
             <span class="chk"></span>
             <span class="task-text">${escapeHtml(t.text)}</span>
             ${menuBtn}

@@ -276,6 +276,8 @@
     text-decoration-color: var(--done-line);
     text-decoration-thickness: 1.5px;
   }
+  /* Editors: reserve space for the absolute-positioned menu button */
+  li.task.has-menu { padding-right: 26px; }
 
   .chk {
     width: 10px; height: 10px; min-width: 10px;
@@ -294,24 +296,33 @@
   .task-text { font-size: 7.3pt; line-height: 1.3; flex: 1; }
 
   .task-menu-btn {
-    background: rgba(0,0,0,0.06);
-    border: none;
-    font-size: 11pt;
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    background: rgba(0,0,0,0.08);
+    border: 1px solid rgba(0,0,0,0.1);
+    font-size: 9pt;
     font-weight: 900;
     line-height: 1;
     color: #555;
     cursor: pointer;
-    padding: 3px 7px;
+    padding: 2px 5px;
     border-radius: 4px;
     opacity: 0;
     transition: opacity 0.15s, background 0.15s;
-    flex-shrink: 0;
-    min-width: 22px;
-    min-height: 18px;
-    align-self: center;
   }
   li.task:hover .task-menu-btn { opacity: 1; }
-  .task-menu-btn:hover { background: rgba(0,0,0,0.12); color: var(--navy); }
+  .task-menu-btn:hover { background: rgba(0,0,0,0.18); color: var(--navy); }
+  /* Touch devices (phone, tablet): always show the button — no :hover there */
+  @media (hover: none) {
+    .task-menu-btn {
+      opacity: 1;
+      font-size: 11pt;
+      padding: 3px 7px;
+      background: rgba(0,0,0,0.1);
+    }
+    li.task.has-menu { padding-right: 32px; }
+  }
 
   .btn-add-task {
     display: block;
@@ -596,15 +607,6 @@
     .sync-badge, .progress-badge, .user-chip { font-size: 7pt; padding: 3px 8px; }
     .progress-fill { width: 45px; }
     .task-text { font-size: 9pt; }
-    .task-menu-btn {
-      opacity: 1;
-      font-size: 14pt;
-      padding: 6px 10px;
-      background: rgba(0,0,0,0.1);
-      min-width: 34px;
-      min-height: 34px;
-      border: 1px solid rgba(0,0,0,0.08);
-    }
     .task-menu { min-width: 180px; }
     .task-menu button { padding: 12px 14px; font-size: 10pt; }
     li.task { padding: 5px 4px; margin-bottom: 3px; }
