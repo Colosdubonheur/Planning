@@ -515,6 +515,8 @@
   .modal-btn.primary:hover { background: var(--blue-ac); }
   .modal-btn.danger { background: #D33; color: white; }
   .modal-btn.danger:hover { background: #B22; }
+  .modal-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .modal-btn.danger:disabled:hover { background: #D33; }
   .modal-btn.ghost { background: #EEE; color: #444; }
   .modal-btn.ghost:hover { background: #DDD; }
 
@@ -539,8 +541,8 @@
     padding: 2px 7px;
     border-radius: 10px;
   }
-  .users-list .u-role.editor    { background: #FFE8CC; color: #C15F00; }
-  .users-list .u-role.validator { background: #DDEEFF; color: #1E4D90; }
+  .users-list .u-role.directeur { background: #FFE8CC; color: #C15F00; }
+  .users-list .u-role.formateur { background: #DDEEFF; color: #1E4D90; }
   .u-delete {
     background: none;
     border: none;
@@ -583,6 +585,147 @@
   }
   .task-menu button:hover { background: #EEF3F8; }
   .task-menu button.danger { color: #D33; }
+
+  /* ── PLANNING SELECTOR ─────────────────────────────────────── */
+  .planning-picker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 20px;
+    padding: 3px 4px 3px 10px;
+    color: white;
+  }
+  .planning-picker label {
+    font-size: 6.5pt;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.7;
+  }
+  .planning-picker select {
+    background: transparent;
+    color: white;
+    border: none;
+    font-family: 'Nunito', sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    padding: 3px 4px;
+    cursor: pointer;
+    max-width: 150px;
+  }
+  .planning-picker select option {
+    color: var(--text);
+    background: white;
+  }
+  .planning-picker button {
+    background: rgba(255,255,255,0.18);
+    border: none;
+    color: white;
+    border-radius: 14px;
+    width: 22px;
+    height: 22px;
+    font-size: 11pt;
+    font-weight: 900;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+  }
+  .planning-picker button:hover { background: rgba(255,255,255,0.3); }
+  .planning-picker button.danger:hover { background: rgba(220,80,80,0.6); }
+
+  /* Empty state when no planning is accessible */
+  .empty-state {
+    padding: 60px 24px 70px;
+    text-align: center;
+    color: var(--text);
+  }
+  .empty-state.hidden { display: none; }
+  .empty-state-icon {
+    font-size: 56px;
+    line-height: 1;
+    margin-bottom: 14px;
+    opacity: 0.85;
+  }
+  .empty-state h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 20pt;
+    color: var(--navy);
+    margin-bottom: 8px;
+  }
+  .empty-state p {
+    font-size: 10pt;
+    color: #666;
+    max-width: 420px;
+    margin: 0 auto 22px;
+    line-height: 1.55;
+  }
+  .empty-state-btn {
+    background: var(--navy);
+    color: white;
+    border: none;
+    padding: 12px 22px;
+    border-radius: 8px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 11pt;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(27,58,92,0.3);
+    transition: background 0.15s, transform 0.1s;
+  }
+  .empty-state-btn:hover { background: var(--blue-ac); }
+  .empty-state-btn:active { transform: translateY(1px); }
+  .empty-state-btn.disabled,
+  .empty-state-btn:disabled {
+    background: #B0BBC8;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  /* Toast (copy-link confirmation, etc.) */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--navy);
+    color: white;
+    padding: 10px 18px;
+    border-radius: 22px;
+    font-size: 9pt;
+    font-weight: 700;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 1100;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* Planning assignment list (in users modal) */
+  .planning-access-list {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 6px 8px;
+    background: #F7F9FC;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    max-height: 120px;
+    overflow-y: auto;
+  }
+  .planning-access-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 8.5pt;
+    border-bottom: none;
+  }
+  .planning-access-list input[type="checkbox"] { margin: 0; }
 
   /* ── RESPONSIVE (mobile) ────────────────────────────────────── */
   @media (max-width: 720px) {
@@ -675,8 +818,9 @@
 <div class="modal-backdrop hidden" id="users-modal">
   <div class="modal-card">
     <h3>Gestion des utilisateurs</h3>
+    <p style="font-size:8pt;color:#666;margin-bottom:8px">Vous voyez vos sous-utilisateurs et leurs sous-utilisateurs. Cochez les plannings pour gérer les accès.</p>
     <ul class="users-list" id="users-list"></ul>
-    <h3 style="font-size:11pt">Nouvel utilisateur</h3>
+    <h3 style="font-size:11pt">Nouveau sous-utilisateur</h3>
     <div class="modal-field">
       <label for="new-user-name">Identifiant</label>
       <input type="text" id="new-user-name" autocomplete="off">
@@ -688,14 +832,64 @@
     <div class="modal-field">
       <label for="new-user-role">Rôle</label>
       <select id="new-user-role">
-        <option value="validator">Validateur (coche uniquement)</option>
-        <option value="editor">Éditeur (modifie le planning + gère les comptes)</option>
+        <option value="formateur">Formateur (modifie le contenu et coche les tâches)</option>
+        <option value="directeur">Directeur (crée/modifie les plannings, gère les sous-utilisateurs)</option>
       </select>
+    </div>
+    <div class="modal-field">
+      <label>Plannings initiaux <span style="font-weight:500;color:#888">(optionnel)</span></label>
+      <ul class="planning-access-list" id="new-user-plannings"></ul>
+      <p style="font-size:7.5pt;color:#666;margin-top:4px;line-height:1.4">💡 Laissez vide pour créer un directeur indépendant qui gérera ses propres plannings. Vous pourrez aussi lui donner accès plus tard.</p>
     </div>
     <div class="modal-error" id="users-error"></div>
     <div class="modal-actions">
       <button class="modal-btn ghost" type="button" onclick="closeUsersModal()">Fermer</button>
       <button class="modal-btn primary" type="button" onclick="submitNewUser()">Créer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ PLANNING SETTINGS MODAL (create + edit) ══════════════════ -->
+<div class="modal-backdrop hidden" id="planning-settings-modal">
+  <div class="modal-card">
+    <h3 id="planning-settings-title">Paramètres du planning</h3>
+    <div class="modal-field">
+      <label for="planning-settings-name">Nom du planning</label>
+      <input type="text" id="planning-settings-name" maxlength="80" autocomplete="off">
+    </div>
+    <div class="modal-field">
+      <label for="planning-settings-start">Date de début</label>
+      <input type="date" id="planning-settings-start">
+    </div>
+    <div class="modal-field">
+      <label for="planning-settings-days">Nombre de jours</label>
+      <input type="number" id="planning-settings-days" min="1" max="31" step="1">
+    </div>
+    <div id="planning-settings-warning" style="display:none;background:#FFF3F3;border:1px solid #F4C7C7;border-radius:6px;padding:8px 10px;margin:6px 0 4px;font-size:8.5pt;color:#722;line-height:1.45"></div>
+    <div class="modal-error" id="planning-settings-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closePlanningSettingsModal()">Annuler</button>
+      <button class="modal-btn primary" type="button" id="planning-settings-submit" onclick="submitPlanningSettings()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DELETE PLANNING MODAL ════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="delete-planning-modal">
+  <div class="modal-card">
+    <h3 style="color:#B22">⚠ Supprimer ce planning ?</h3>
+    <div style="background:#FFF3F3;border:1px solid #F4C7C7;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:9pt;color:#722;line-height:1.5">
+      <strong id="delete-planning-name"></strong><br>
+      Cette action est <strong>irréversible</strong>. Toutes les tâches seront définitivement supprimées et les sous-utilisateurs perdront l'accès à ce planning.
+    </div>
+    <div class="modal-field">
+      <label for="delete-planning-confirm">Pour confirmer, tapez <code style="background:#F0E0E0;padding:1px 5px;border-radius:3px;color:#722;font-weight:800">supprimer</code> ci-dessous :</label>
+      <input type="text" id="delete-planning-confirm" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="supprimer">
+    </div>
+    <div class="modal-error" id="delete-planning-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeDeletePlanningModal()">Annuler</button>
+      <button class="modal-btn danger" type="button" id="delete-planning-confirm-btn" disabled onclick="confirmDeletePlanning()">Supprimer définitivement</button>
     </div>
   </div>
 </div>
@@ -731,11 +925,19 @@
     <div class="header-left">
       <div class="header-icon">🎪</div>
       <div>
-        <h1>Planning Stage BAFA Base</h1>
-        <span class="subtitle">Stage du 11 au 18 Avril · Formation Animateur · 8 jours</span>
+        <h1 id="planning-title">Planning</h1>
+        <span class="subtitle" id="planning-subtitle">Sélectionnez un planning</span>
       </div>
     </div>
     <div class="header-right no-print">
+      <div class="planning-picker no-print" id="planning-picker" style="display:none">
+        <label for="planning-select">📋</label>
+        <select id="planning-select" onchange="onPlanningSelectChange(this.value)"></select>
+        <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
+        <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
+        <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
+        <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
+      </div>
       <div class="sync-badge" id="sync-badge">
         <div class="sync-dot"></div>
         <span id="sync-text">Connexion…</span>
@@ -757,8 +959,16 @@
     </div>
   </div>
 
+  <!-- EMPTY STATE (shown when the user has no accessible planning) -->
+  <div id="empty-state" class="empty-state hidden">
+    <div class="empty-state-icon">📋</div>
+    <h2>Aucun planning</h2>
+    <p id="empty-state-message">Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.</p>
+    <button type="button" class="empty-state-btn" id="empty-state-create" onclick="createPlanningPrompt()">＋ Créer un planning</button>
+  </div>
+
   <!-- TABLE -->
-  <div class="table-scroll">
+  <div class="table-scroll" id="table-scroll">
     <table id="planning-table"></table>
   </div>
 
@@ -773,6 +983,8 @@
   </div>
 
 </div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="app.js"></script>
 </body>

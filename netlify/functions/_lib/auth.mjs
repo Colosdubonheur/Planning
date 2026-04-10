@@ -63,7 +63,12 @@ export function verifyToken(token) {
   if (!payload || typeof payload !== "object") return null;
   if (typeof payload.exp !== "number" || payload.exp < Math.floor(Date.now() / 1000)) return null;
   if (!payload.user || !payload.role) return null;
-  return { user: payload.user, role: payload.role, exp: payload.exp };
+  // Back-compat with tokens issued before the role rename.  Keeps existing
+  // sessions valid after the upgrade.
+  let role = payload.role;
+  if (role === "editor") role = "directeur";
+  else if (role === "validator") role = "formateur";
+  return { user: payload.user, role, exp: payload.exp };
 }
 
 export function buildAuthCookie(token) {
@@ -90,14 +95,29 @@ export function getUsersStore() {
   return getStore({ name: "planning-users", consistency: "strong" });
 }
 
-async function loadUsers(store) {
-  const raw = await store.get("users");
+export async function loadUsers(store) {
+  const raw = await (store || getUsersStore()).get("users");
   if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return {}; }
+  try {
+    const parsed = JSON.parse(raw);
+    // Ensure every record has the expected shape (hierarchy fields added later).
+    for (const [name, rec] of Object.entries(parsed)) {
+      if (!rec || typeof rec !== "object") continue;
+      if (!Array.isArray(rec.plannings)) rec.plannings = [];
+      if (rec.parent === undefined) rec.parent = null;
+      // Role rename migration (editor → directeur, validator → formateur).
+      // Persisted on the next saveUsers() call.
+      if (rec.role === "editor") rec.role = "directeur";
+      else if (rec.role === "validator") rec.role = "formateur";
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
 }
 
-async function saveUsers(store, users) {
-  await store.set("users", JSON.stringify(users));
+export async function saveUsers(store, users) {
+  await (store || getUsersStore()).set("users", JSON.stringify(users));
 }
 
 export async function ensureBootstrapAdmin(store) {
@@ -108,7 +128,9 @@ export async function ensureBootstrapAdmin(store) {
   if (!adminUser || !adminPwd) return users;
   users[adminUser] = {
     passwordHash: hashPassword(adminPwd),
-    role: "editor",
+    role: "directeur",
+    parent: null,
+    plannings: [],
     createdAt: Date.now(),
   };
   await saveUsers(store, users);
@@ -124,39 +146,187 @@ export async function authenticate(user, password) {
   return { user, role: record.role };
 }
 
-export async function listUsers() {
-  const store = getUsersStore();
-  const users = await ensureBootstrapAdmin(store);
-  return Object.entries(users).map(([user, rec]) => ({
-    user,
-    role: rec.role,
-    createdAt: rec.createdAt,
-  }));
+// ── Hierarchy helpers ──────────────────────────────────────────
+
+// Return true if `user` is `ancestor` or descends from `ancestor`.
+export function isInSubtree(user, ancestor, users) {
+  if (!users[user]) return false;
+  let cursor = user;
+  const seen = new Set();
+  while (cursor) {
+    if (cursor === ancestor) return true;
+    if (seen.has(cursor)) return false; // cycle guard
+    seen.add(cursor);
+    const rec = users[cursor];
+    if (!rec) return false;
+    cursor = rec.parent || null;
+  }
+  return false;
 }
 
-export async function createUser({ user, password, role }) {
+// Return all users (including self) that descend from `root`.
+export function getSubtree(root, users) {
+  const result = [];
+  for (const name of Object.keys(users)) {
+    if (isInSubtree(name, root, users)) result.push(name);
+  }
+  return result;
+}
+
+// List users visible to `viewer`: viewer + their descendants.
+export async function listUsersFor(viewer) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  const visible = getSubtree(viewer, users);
+  return visible
+    .map((name) => {
+      const rec = users[name];
+      return {
+        user: name,
+        role: rec.role,
+        parent: rec.parent || null,
+        plannings: Array.isArray(rec.plannings) ? [...rec.plannings] : [],
+        createdAt: rec.createdAt || 0,
+      };
+    })
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+
+export async function createUser({ user, password, role, parent, plannings }) {
   if (!user || !password || !role) throw new Error("user, password et role sont obligatoires");
   if (!/^[a-zA-Z0-9._-]{2,32}$/.test(user)) throw new Error("Identifiant invalide (2-32 caractères, alphanumérique)");
   if (password.length < 6) throw new Error("Mot de passe trop court (6 caractères minimum)");
-  if (role !== "editor" && role !== "validator") throw new Error("Rôle invalide");
+  // Back-compat: accept the old role names too, silently map them to the new ones.
+  if (role === "editor") role = "directeur";
+  else if (role === "validator") role = "formateur";
+  if (role !== "directeur" && role !== "formateur") throw new Error("Rôle invalide");
   const store = getUsersStore();
   const users = await loadUsers(store);
   if (users[user]) throw new Error("Ce nom d'utilisateur existe déjà");
+  if (parent && !users[parent]) throw new Error("Utilisateur parent introuvable");
+
+  // If plannings specified, the parent must have access to each.
+  const parentPlannings = parent && users[parent] && Array.isArray(users[parent].plannings)
+    ? new Set(users[parent].plannings)
+    : null;
+  const initialPlannings = Array.isArray(plannings) ? plannings.filter((p) => typeof p === "string") : [];
+  if (parentPlannings) {
+    for (const pid of initialPlannings) {
+      if (!parentPlannings.has(pid)) {
+        throw new Error("Impossible d'affecter à un planning non accessible au créateur");
+      }
+    }
+  }
+
   users[user] = {
     passwordHash: hashPassword(password),
     role,
+    parent: parent || null,
+    plannings: initialPlannings,
     createdAt: Date.now(),
   };
   await saveUsers(store, users);
-  return { user, role, createdAt: users[user].createdAt };
+  return {
+    user,
+    role,
+    parent: parent || null,
+    plannings: [...initialPlannings],
+    createdAt: users[user].createdAt,
+  };
 }
 
-export async function deleteUser(user) {
+// Delete `user` (and all their descendants). Reparent is NOT supported; the
+// whole subtree is removed.  Returns the list of removed usernames.
+export async function deleteUserCascade(user) {
   const store = getUsersStore();
   const users = await loadUsers(store);
   if (!users[user]) throw new Error("Utilisateur introuvable");
-  delete users[user];
+  const toRemove = getSubtree(user, users);
+  for (const name of toRemove) {
+    delete users[name];
+  }
   await saveUsers(store, users);
+  return toRemove;
+}
+
+// Grant `user` access to planning `planningId`. `by` is the acting user
+// (used to verify authorization) and `by` must have access to the planning.
+// `user` must be in `by`'s subtree (or `by` itself).
+export async function grantPlanningAccess(user, planningId, by) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  if (!users[user]) throw new Error("Utilisateur introuvable");
+  if (!users[by]) throw new Error("Utilisateur appelant introuvable");
+  if (!isInSubtree(user, by, users)) throw new Error("Permission refusée (hors sous-arbre)");
+  const byPlannings = Array.isArray(users[by].plannings) ? users[by].plannings : [];
+  if (!byPlannings.includes(planningId)) {
+    throw new Error("Vous n'avez pas accès à ce planning");
+  }
+  const cur = Array.isArray(users[user].plannings) ? users[user].plannings : [];
+  if (!cur.includes(planningId)) cur.push(planningId);
+  users[user].plannings = cur;
+  await saveUsers(store, users);
+  return [...cur];
+}
+
+export async function revokePlanningAccess(user, planningId, by) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  if (!users[user]) throw new Error("Utilisateur introuvable");
+  if (!users[by]) throw new Error("Utilisateur appelant introuvable");
+  if (!isInSubtree(user, by, users)) throw new Error("Permission refusée (hors sous-arbre)");
+  // The caller can't revoke their own access through this endpoint.
+  if (user === by) throw new Error("Impossible de révoquer votre propre accès");
+  const cur = Array.isArray(users[user].plannings) ? users[user].plannings : [];
+  users[user].plannings = cur.filter((p) => p !== planningId);
+  await saveUsers(store, users);
+  return [...users[user].plannings];
+}
+
+// Remove a planning from every user's access list (used when a planning is
+// deleted).  Returns the number of users touched.
+export async function removePlanningFromAllUsers(planningId) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  let touched = 0;
+  for (const rec of Object.values(users)) {
+    if (!Array.isArray(rec.plannings)) continue;
+    const next = rec.plannings.filter((p) => p !== planningId);
+    if (next.length !== rec.plannings.length) {
+      rec.plannings = next;
+      touched++;
+    }
+  }
+  if (touched) await saveUsers(store, users);
+  return touched;
+}
+
+// Append a planning ID to a user's access list. Used when they create a new
+// planning: they automatically become an owner with access.
+export async function addPlanningToUser(user, planningId) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  if (!users[user]) throw new Error("Utilisateur introuvable");
+  const cur = Array.isArray(users[user].plannings) ? users[user].plannings : [];
+  if (!cur.includes(planningId)) cur.push(planningId);
+  users[user].plannings = cur;
+  await saveUsers(store, users);
+  return [...cur];
+}
+
+// Load a single user record (returns null if not found).
+export async function getUser(user) {
+  const store = getUsersStore();
+  const users = await ensureBootstrapAdmin(store);
+  const rec = users[user];
+  if (!rec) return null;
+  return {
+    user,
+    role: rec.role,
+    parent: rec.parent || null,
+    plannings: Array.isArray(rec.plannings) ? [...rec.plannings] : [],
+    createdAt: rec.createdAt || 0,
+  };
 }
 
 export function requireAuth(req, { role } = {}) {

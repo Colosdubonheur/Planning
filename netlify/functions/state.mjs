@@ -1,7 +1,13 @@
-import { getStore } from "@netlify/blobs";
 import { requireAuth } from "./_lib/auth.mjs";
-import { updateJsonWithCAS } from "./_lib/cas.mjs";
-import { buildInitialState } from "./_lib/seed.mjs";
+import {
+  ensureMigration,
+  getPlanningState,
+  getPlanningMeta,
+  updatePlanningState,
+  listPlanningsForUser,
+  userHasAccess,
+} from "./_lib/plannings.mjs";
+import { buildDaysFromStart } from "./_lib/seed.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -16,16 +22,6 @@ function newTaskId() {
   return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function isValidState(s) {
-  return (
-    s &&
-    typeof s === "object" &&
-    Array.isArray(s.days) &&
-    Array.isArray(s.slots) &&
-    Array.isArray(s.tasks)
-  );
-}
-
 function reorderColumn(state, dayId, slotId) {
   const column = state.tasks
     .filter((t) => t.dayId === dayId && t.slotId === slotId)
@@ -38,6 +34,16 @@ function applyOp(state, op, actor) {
     throw new Error("Opération manquante");
   }
 
+  // Permission model:
+  //   - Anyone with planning access can tick tasks and edit their content
+  //     (add/edit/remove/reorder/move) — this lets formateurs do their job.
+  //   - Structural / destructive ops (reset, setSchedule) are reserved to
+  //     the planning owner; only directeurs can ever be owners.
+  //   - Rename / delete are handled in plannings.mjs (also owner-only).
+  const requireOwner = () => {
+    if (!actor.isOwner) throw new Error("Permission refusée (propriétaire requis)");
+  };
+
   switch (op.op) {
     case "toggle": {
       const task = state.tasks.find((t) => t.id === op.taskId);
@@ -47,7 +53,6 @@ function applyOp(state, op, actor) {
     }
 
     case "edit": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       if (typeof op.text !== "string") throw new Error("Texte manquant");
@@ -59,7 +64,6 @@ function applyOp(state, op, actor) {
     }
 
     case "add": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const { dayId, slotId } = op;
       if (!state.days.some((d) => d.id === dayId)) throw new Error("Jour invalide");
       if (!state.slots.some((s) => s.id === slotId)) throw new Error("Créneau invalide");
@@ -81,7 +85,6 @@ function applyOp(state, op, actor) {
     }
 
     case "remove": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const idx = state.tasks.findIndex((t) => t.id === op.taskId);
       if (idx === -1) throw new Error("Tâche introuvable");
       const removed = state.tasks[idx];
@@ -91,7 +94,6 @@ function applyOp(state, op, actor) {
     }
 
     case "reorder": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       if (op.direction !== "up" && op.direction !== "down") {
@@ -103,7 +105,6 @@ function applyOp(state, op, actor) {
       const idx = column.findIndex((t) => t.id === task.id);
       const newIdx = op.direction === "up" ? idx - 1 : idx + 1;
       if (newIdx < 0 || newIdx >= column.length) {
-        // Already at the edge — no-op but still bump version so clients refresh cleanly
         break;
       }
       [column[idx], column[newIdx]] = [column[newIdx], column[idx]];
@@ -112,7 +113,6 @@ function applyOp(state, op, actor) {
     }
 
     case "move": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       if (!state.days.some((d) => d.id === op.dayId)) throw new Error("Jour invalide");
@@ -134,8 +134,26 @@ function applyOp(state, op, actor) {
     }
 
     case "reset": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
+      requireOwner();
       for (const t of state.tasks) t.done = false;
+      break;
+    }
+
+    case "setSchedule": {
+      requireOwner();
+      const { startDate, dayCount } = op;
+      const newDays = buildDaysFromStart(startDate, dayCount); // throws on invalid
+      const keep = new Set(newDays.map((d) => d.id));
+      state.days = newDays;
+      state.startDate = startDate;
+      // Drop tasks whose day no longer exists, then recompact each surviving column.
+      state.tasks = state.tasks.filter((t) => keep.has(t.dayId));
+      for (const d of newDays) {
+        for (const slot of state.slots) {
+          if (slot.id === "repas") continue;
+          reorderColumn(state, d.id, slot.id);
+        }
+      }
       break;
     }
 
@@ -145,6 +163,23 @@ function applyOp(state, op, actor) {
 
   state.version = (state.version || 0) + 1;
   state.lastUpdated = Date.now();
+  return state;
+}
+
+// Resolve which planning the request is about.  Priority:
+//   1. ?planning=<id> query parameter
+//   2. op.planningId in POST body
+//   3. For authenticated users: their first accessible planning
+//   4. For anonymous GETs: the first planning in the public list (empty if none)
+async function resolvePlanningId(url, body, actorUser) {
+  const fromQuery = url.searchParams.get("planning");
+  if (fromQuery) return fromQuery;
+  if (body && typeof body.planningId === "string" && body.planningId) return body.planningId;
+  if (actorUser) {
+    const list = await listPlanningsForUser(actorUser);
+    if (list.length) return list[0].id;
+  }
+  return null;
 }
 
 export default async (req) => {
@@ -152,25 +187,29 @@ export default async (req) => {
     return new Response(null, { status: 204, headers: jsonHeaders });
   }
 
-  const store = getStore({ name: "planning", consistency: "strong" });
+  await ensureMigration();
+  const url = new URL(req.url);
 
-  // GET is public (read-only) so the planning can be shared with trainees
-  // without any login. Writes always require auth below.
+  // ── GET /api/state ─────────────────────────────────────────────
+  // Public read: requires an explicit ?planning=<id>.  The frontend passes
+  // the currently selected planning so anonymous viewers can view a shared
+  // link.  (The individual planning is the shareable unit.)
   if (req.method === "GET") {
     try {
-      const result = await store.getWithMetadata("state", { type: "json" });
-      let state = result ? result.data : null;
-      if (!isValidState(state)) {
-        // First boot or legacy format — seed it.
-        state = buildInitialState();
-        await store.set("state", JSON.stringify(state));
+      const planningId = url.searchParams.get("planning");
+      if (!planningId) {
+        return json({ error: "Paramètre 'planning' requis" }, { status: 400 });
       }
-      return json(state);
+      const meta = await getPlanningMeta(planningId);
+      if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
+      const state = await getPlanningState(planningId);
+      return json({ ...state, planningId, planningName: meta.name });
     } catch (e) {
       return json({ error: "Erreur de lecture: " + (e.message || e) }, { status: 500 });
     }
   }
 
+  // ── POST /api/state ────────────────────────────────────────────
   if (req.method === "POST") {
     const auth = requireAuth(req);
     if (auth.error) return auth.error;
@@ -179,18 +218,26 @@ export default async (req) => {
     let body;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
 
+    const planningId = await resolvePlanningId(url, body, actor.user);
+    if (!planningId) return json({ error: "Paramètre 'planning' requis" }, { status: 400 });
+
+    // Access control.
+    const hasAccess = await userHasAccess(actor.user, planningId);
+    if (!hasAccess) return json({ error: "Permission refusée" }, { status: 403 });
+
+    const meta = await getPlanningMeta(planningId);
+    if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
+
+    // Pass ownership through to applyOp so destructive/structural ops
+    // (reset, setSchedule) can require it.  Content ops are always allowed
+    // for anyone who passed the access gate above.
+    const effectiveActor = { ...actor, isOwner: meta.ownerId === actor.user };
+
     try {
-      const next = await updateJsonWithCAS(
-        store,
-        "state",
-        (current) => {
-          let state = isValidState(current) ? current : buildInitialState();
-          applyOp(state, body, actor);
-          return state;
-        },
-        { fallback: () => buildInitialState() }
-      );
-      return json(next);
+      const next = await updatePlanningState(planningId, (state) => {
+        return applyOp(state, body, effectiveActor);
+      });
+      return json({ ...next, planningId, planningName: meta.name });
     } catch (e) {
       const message = e && e.message ? e.message : "Erreur interne";
       const status = /permission|refus/i.test(message) ? 403 : 400;
