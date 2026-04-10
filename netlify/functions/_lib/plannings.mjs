@@ -1,6 +1,6 @@
 import { getStore } from "@netlify/blobs";
 import { updateJsonWithCAS } from "./cas.mjs";
-import { buildInitialState } from "./seed.mjs";
+import { buildInitialState, buildEmptyState } from "./seed.mjs";
 import {
   addPlanningToUser,
   removePlanningFromAllUsers,
@@ -166,17 +166,19 @@ export async function getPlanningMeta(planningId) {
 
 // Create a new planning owned by `ownerId`.  The owner is automatically
 // granted access (their users record is updated).
-export async function createPlanning({ name, ownerId }) {
+export async function createPlanning({ name, ownerId, startDate, dayCount }) {
   await ensureMigration();
   const cleanName = (name || "").trim();
   if (!cleanName) throw new Error("Nom du planning obligatoire");
   if (cleanName.length > 80) throw new Error("Nom trop long (80 caractères max)");
   if (!ownerId) throw new Error("Propriétaire obligatoire");
+  if (!startDate) throw new Error("Date de début obligatoire");
 
   const store = getPlanningsStore();
   const id = newPlanningId();
   const now = Date.now();
-  const state = buildInitialState();
+  // buildEmptyState validates startDate / dayCount and throws on bad input.
+  const state = buildEmptyState({ startDate, dayCount: dayCount || 8 });
   state.lastUpdated = now;
 
   await store.set(stateKey(id), JSON.stringify(state));

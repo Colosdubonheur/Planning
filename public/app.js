@@ -293,41 +293,142 @@ async function onPlanningSelectChange(id) {
   setSyncStatus('ok', 'En ligne ✓');
 }
 
-async function createPlanningPrompt() {
-  const name = prompt('Nom du nouveau planning :');
-  if (!name || !name.trim()) return;
+// ── PLANNING SETTINGS MODAL (shared by create + edit) ─────────
+let planningSettingsMode = null; // 'create' | 'edit'
+
+function todayIso() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function openPlanningSettingsModal(mode) {
+  planningSettingsMode = mode;
+  $('planning-settings-title').textContent = mode === 'create'
+    ? 'Nouveau planning'
+    : 'Modifier le planning';
+  $('planning-settings-submit').textContent = mode === 'create' ? 'Créer' : 'Enregistrer';
+  $('planning-settings-error').textContent = '';
+  $('planning-settings-warning').style.display = 'none';
+  $('planning-settings-warning').textContent = '';
+
+  if (mode === 'create') {
+    $('planning-settings-name').value = '';
+    $('planning-settings-start').value = todayIso();
+    $('planning-settings-days').value = '8';
+  } else {
+    const current = planningsList.find((p) => p.id === currentPlanningId);
+    if (!current || !currentState) return;
+    $('planning-settings-name').value = current.name || '';
+    $('planning-settings-start').value = currentState.startDate || '';
+    $('planning-settings-days').value = String(currentState.days.length || 8);
+  }
+  $('planning-settings-modal').classList.remove('hidden');
+  setTimeout(() => $('planning-settings-name').focus(), 50);
+}
+
+function closePlanningSettingsModal() {
+  $('planning-settings-modal').classList.add('hidden');
+  planningSettingsMode = null;
+}
+
+function recomputeSettingsWarning() {
+  // Only relevant in edit mode: warn if reducing the day count would drop tasks.
+  const warnEl = $('planning-settings-warning');
+  if (planningSettingsMode !== 'edit' || !currentState) {
+    warnEl.style.display = 'none';
+    return;
+  }
+  const newCount = parseInt($('planning-settings-days').value, 10);
+  if (!Number.isInteger(newCount) || newCount >= currentState.days.length) {
+    warnEl.style.display = 'none';
+    return;
+  }
+  const droppedDays = currentState.days.slice(newCount);
+  const droppedIds = new Set(droppedDays.map((d) => d.id));
+  const droppedTasks = currentState.tasks.filter((t) => droppedIds.has(t.dayId)).length;
+  if (droppedTasks === 0) {
+    warnEl.style.display = 'none';
+    return;
+  }
+  warnEl.textContent = `⚠ Réduire à ${newCount} jours supprimera ${droppedTasks} tâche${droppedTasks > 1 ? 's' : ''} sur les jours retirés.`;
+  warnEl.style.display = '';
+}
+
+async function submitPlanningSettings() {
+  const name = $('planning-settings-name').value.trim();
+  const startDate = $('planning-settings-start').value;
+  const dayCount = parseInt($('planning-settings-days').value, 10);
+  const errEl = $('planning-settings-error');
+  errEl.textContent = '';
+
+  if (!name) { errEl.textContent = 'Nom obligatoire'; return; }
+  if (!startDate) { errEl.textContent = 'Date de début obligatoire'; return; }
+  if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 31) {
+    errEl.textContent = 'Nombre de jours invalide (1 à 31)';
+    return;
+  }
+
+  const submit = $('planning-settings-submit');
+  submit.disabled = true;
+
   try {
-    const data = await apiFetch(API_PLANNINGS, {
-      method: 'POST',
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    await loadPlanningsList();
-    rememberPlanningId(data.planning.id);
-    await fetchState();
-    renderPlanningSelector();
-    setSyncStatus('ok', 'Planning créé ✓');
+    if (planningSettingsMode === 'create') {
+      const data = await apiFetch(API_PLANNINGS, {
+        method: 'POST',
+        body: JSON.stringify({ name, startDate, dayCount }),
+      });
+      await loadPlanningsList();
+      rememberPlanningId(data.planning.id);
+      await fetchState();
+      renderPlanningSelector();
+      setSyncStatus('ok', 'Planning créé ✓');
+      showToast('Planning créé');
+    } else if (planningSettingsMode === 'edit') {
+      if (!currentPlanningId || !currentState) throw new Error('Aucun planning sélectionné');
+      const current = planningsList.find((p) => p.id === currentPlanningId);
+      const nameChanged = !current || current.name !== name;
+      const datesChanged = (currentState.startDate || '') !== startDate
+        || currentState.days.length !== dayCount;
+
+      // If reducing day count, confirm task loss explicitly (in addition to the
+      // inline warning) — symmetric with the destructive-delete UX.
+      if (datesChanged && dayCount < currentState.days.length) {
+        const droppedDays = currentState.days.slice(dayCount);
+        const droppedIds = new Set(droppedDays.map((d) => d.id));
+        const droppedTasks = currentState.tasks.filter((t) => droppedIds.has(t.dayId)).length;
+        if (droppedTasks > 0 && !confirm(`Réduire à ${dayCount} jours supprimera ${droppedTasks} tâche${droppedTasks > 1 ? 's' : ''}. Continuer ?`)) {
+          submit.disabled = false;
+          return;
+        }
+      }
+
+      if (nameChanged) {
+        await apiFetch(`${API_PLANNINGS}/${encodeURIComponent(currentPlanningId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name }),
+        });
+      }
+      if (datesChanged) {
+        await pushOp({ op: 'setSchedule', startDate, dayCount });
+      }
+      await loadPlanningsList();
+      renderPlanningSelector();
+      setSyncStatus('ok', 'Planning mis à jour ✓');
+      showToast('Planning mis à jour');
+    }
+    closePlanningSettingsModal();
   } catch (e) {
-    alert(e.message || 'Erreur lors de la création du planning');
+    errEl.textContent = e.message || 'Erreur';
+  } finally {
+    submit.disabled = false;
   }
 }
 
-async function renamePlanningPrompt() {
-  if (!currentPlanningId) return;
-  const current = planningsList.find((p) => p.id === currentPlanningId);
-  const name = prompt('Nouveau nom :', current ? current.name : '');
-  if (!name || !name.trim()) return;
-  try {
-    await apiFetch(`${API_PLANNINGS}/${encodeURIComponent(currentPlanningId)}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ name: name.trim() }),
-    });
-    await loadPlanningsList();
-    renderPlanningSelector();
-    setSyncStatus('ok', 'Planning renommé ✓');
-  } catch (e) {
-    alert(e.message || 'Erreur lors du renommage');
-  }
-}
+function createPlanningPrompt() { openPlanningSettingsModal('create'); }
+function renamePlanningPrompt() { openPlanningSettingsModal('edit'); }
 
 // Type-to-confirm delete: opens a dedicated modal that requires the user to
 // type the word "supprimer" before the destructive button is enabled.  This
@@ -1001,6 +1102,9 @@ async function init() {
     }
   });
 
+  const settingsDays = $('planning-settings-days');
+  if (settingsDays) settingsDays.addEventListener('input', recomputeSettingsWarning);
+
   const delInput = $('delete-planning-confirm');
   const delBtn = $('delete-planning-confirm-btn');
   if (delInput && delBtn) {
@@ -1047,5 +1151,7 @@ window.deletePlanningPrompt  = deletePlanningPrompt;
 window.closeDeletePlanningModal = closeDeletePlanningModal;
 window.confirmDeletePlanning = confirmDeletePlanning;
 window.sharePlanningUrl      = sharePlanningUrl;
+window.closePlanningSettingsModal = closePlanningSettingsModal;
+window.submitPlanningSettings = submitPlanningSettings;
 
 window.addEventListener('DOMContentLoaded', init);

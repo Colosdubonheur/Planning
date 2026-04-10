@@ -48,8 +48,13 @@ export default async (req) => {
       }
       let body;
       try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
-      const { name } = body || {};
-      const created = await createPlanning({ name, ownerId: actor.user });
+      const { name, startDate, dayCount } = body || {};
+      const created = await createPlanning({
+        name,
+        ownerId: actor.user,
+        startDate,
+        dayCount,
+      });
       return json({ planning: created }, { status: 201 });
     }
 

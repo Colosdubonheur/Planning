@@ -117,6 +117,65 @@ const APREM = {
   ],
 };
 
+// ── Date helpers (used by buildEmptyState + state.mjs setSchedule op) ──
+const FR_WEEKDAY = new Intl.DateTimeFormat("fr-FR", { weekday: "long" });
+const FR_SHORT_DATE = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short" });
+
+function frenchDayName(date) {
+  const name = FR_WEEKDAY.format(date);
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function frenchShortDate(date) {
+  // fr-FR formatter appends a trailing "." to abbreviated months ("avr.").
+  // Strip it to match the look of the original seed data ("11 avr").
+  return FR_SHORT_DATE.format(date).replace(/\.$/, "");
+}
+
+// Build a days array of length `count` starting at the given ISO date
+// (YYYY-MM-DD).  Day IDs are stable (`j1`..`jN`) so existing tasks survive
+// rescheduling as long as their dayId is still in range.
+export function buildDaysFromStart(startISO, count) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(startISO || ""));
+  if (!m) throw new Error("Date de début invalide (format YYYY-MM-DD attendu)");
+  const year = +m[1], month = +m[2], day = +m[3];
+  const probe = new Date(year, month - 1, day);
+  if (probe.getFullYear() !== year || probe.getMonth() !== month - 1 || probe.getDate() !== day) {
+    throw new Error("Date de début invalide");
+  }
+  const n = Number(count);
+  if (!Number.isInteger(n) || n < 1 || n > 31) {
+    throw new Error("Nombre de jours invalide (1-31)");
+  }
+  const days = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(year, month - 1, day + i);
+    const dow = d.getDay(); // 0 = Sunday, 6 = Saturday
+    days.push({
+      id: `j${i + 1}`,
+      short: `J${i + 1}`,
+      name: frenchDayName(d),
+      date: frenchShortDate(d),
+      weekend: dow === 0 || dow === 6,
+    });
+  }
+  return days;
+}
+
+// Build a fresh, empty state for a new planning.  No pre-seeded tasks; the
+// caller specifies the start date and length.
+export function buildEmptyState({ startDate, dayCount } = {}) {
+  const days = buildDaysFromStart(startDate, dayCount);
+  return {
+    days,
+    slots: SLOTS,
+    tasks: [],
+    startDate,
+    version: 1,
+    lastUpdated: Date.now(),
+  };
+}
+
 let idCounter = 0;
 function makeId() {
   idCounter += 1;

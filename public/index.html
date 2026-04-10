@@ -800,6 +800,31 @@
   </div>
 </div>
 
+<!-- ═══ PLANNING SETTINGS MODAL (create + edit) ══════════════════ -->
+<div class="modal-backdrop hidden" id="planning-settings-modal">
+  <div class="modal-card">
+    <h3 id="planning-settings-title">Paramètres du planning</h3>
+    <div class="modal-field">
+      <label for="planning-settings-name">Nom du planning</label>
+      <input type="text" id="planning-settings-name" maxlength="80" autocomplete="off">
+    </div>
+    <div class="modal-field">
+      <label for="planning-settings-start">Date de début</label>
+      <input type="date" id="planning-settings-start">
+    </div>
+    <div class="modal-field">
+      <label for="planning-settings-days">Nombre de jours</label>
+      <input type="number" id="planning-settings-days" min="1" max="31" step="1">
+    </div>
+    <div id="planning-settings-warning" style="display:none;background:#FFF3F3;border:1px solid #F4C7C7;border-radius:6px;padding:8px 10px;margin:6px 0 4px;font-size:8.5pt;color:#722;line-height:1.45"></div>
+    <div class="modal-error" id="planning-settings-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closePlanningSettingsModal()">Annuler</button>
+      <button class="modal-btn primary" type="button" id="planning-settings-submit" onclick="submitPlanningSettings()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ DELETE PLANNING MODAL ════════════════════════════════════ -->
 <div class="modal-backdrop hidden" id="delete-planning-modal">
   <div class="modal-card">

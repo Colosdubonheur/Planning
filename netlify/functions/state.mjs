@@ -7,6 +7,7 @@ import {
   listPlanningsForUser,
   userHasAccess,
 } from "./_lib/plannings.mjs";
+import { buildDaysFromStart } from "./_lib/seed.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -130,6 +131,24 @@ function applyOp(state, op, actor) {
     case "reset": {
       if (actor.role !== "editor") throw new Error("Permission refusée");
       for (const t of state.tasks) t.done = false;
+      break;
+    }
+
+    case "setSchedule": {
+      if (actor.role !== "editor") throw new Error("Permission refusée");
+      const { startDate, dayCount } = op;
+      const newDays = buildDaysFromStart(startDate, dayCount); // throws on invalid
+      const keep = new Set(newDays.map((d) => d.id));
+      state.days = newDays;
+      state.startDate = startDate;
+      // Drop tasks whose day no longer exists, then recompact each surviving column.
+      state.tasks = state.tasks.filter((t) => keep.has(t.dayId));
+      for (const d of newDays) {
+        for (const slot of state.slots) {
+          if (slot.id === "repas") continue;
+          reorderColumn(state, d.id, slot.id);
+        }
+      }
       break;
     }
 
