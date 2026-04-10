@@ -78,6 +78,58 @@ function rememberPlanningId(id) {
     if (id) localStorage.setItem(STORAGE_PLANNING_KEY, id);
     else localStorage.removeItem(STORAGE_PLANNING_KEY);
   } catch {}
+  // Keep the address bar in sync so users can just copy the URL.
+  try {
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('planning', id);
+    else url.searchParams.delete('planning');
+    window.history.replaceState(null, '', url.toString());
+  } catch {}
+}
+
+// ── TOAST ──────────────────────────────────────────────────────
+let toastTimer = null;
+function showToast(message) {
+  const el = $('toast');
+  if (!el) return;
+  el.textContent = message;
+  el.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+async function sharePlanningUrl() {
+  if (!currentPlanningId) {
+    showToast('Aucun planning sélectionné');
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.set('planning', currentPlanningId);
+  // Strip any auth-specific fragments — the share link is read-only.
+  const link = url.toString();
+  let copied = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(link);
+      copied = true;
+    }
+  } catch {}
+  if (!copied) {
+    // Fallback for older browsers / non-secure contexts.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      copied = true;
+    } catch {}
+  }
+  if (copied) showToast('🔗 Lien de partage copié');
+  else prompt('Copiez ce lien :', link);
 }
 
 function readStoredPlanningId() {
@@ -151,6 +203,9 @@ function applyUserUI() {
   $('user-role-label').textContent = roleLabel;
   $('btn-logout').style.display = '';
   if (picker) picker.style.display = planningsList.length ? '' : '';
+  // Share button is available to anyone logged in, regardless of role.
+  $('btn-share-planning').style.display = currentPlanningId ? '' : 'none';
+
   if (currentUser.role === 'editor') {
     $('btn-edit-mode').style.display = '';
     $('btn-users').style.display = '';
@@ -935,5 +990,6 @@ window.onPlanningSelectChange = onPlanningSelectChange;
 window.createPlanningPrompt  = createPlanningPrompt;
 window.renamePlanningPrompt  = renamePlanningPrompt;
 window.deletePlanningPrompt  = deletePlanningPrompt;
+window.sharePlanningUrl      = sharePlanningUrl;
 
 window.addEventListener('DOMContentLoaded', init);
