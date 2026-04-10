@@ -515,6 +515,8 @@
   .modal-btn.primary:hover { background: var(--blue-ac); }
   .modal-btn.danger { background: #D33; color: white; }
   .modal-btn.danger:hover { background: #B22; }
+  .modal-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .modal-btn.danger:disabled:hover { background: #D33; }
   .modal-btn.ghost { background: #EEE; color: #444; }
   .modal-btn.ghost:hover { background: #DDD; }
 
@@ -794,6 +796,26 @@
     <div class="modal-actions">
       <button class="modal-btn ghost" type="button" onclick="closeUsersModal()">Fermer</button>
       <button class="modal-btn primary" type="button" onclick="submitNewUser()">Créer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ DELETE PLANNING MODAL ════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="delete-planning-modal">
+  <div class="modal-card">
+    <h3 style="color:#B22">⚠ Supprimer ce planning ?</h3>
+    <div style="background:#FFF3F3;border:1px solid #F4C7C7;border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:9pt;color:#722;line-height:1.5">
+      <strong id="delete-planning-name"></strong><br>
+      Cette action est <strong>irréversible</strong>. Toutes les tâches seront définitivement supprimées et les sous-utilisateurs perdront l'accès à ce planning.
+    </div>
+    <div class="modal-field">
+      <label for="delete-planning-confirm">Pour confirmer, tapez <code style="background:#F0E0E0;padding:1px 5px;border-radius:3px;color:#722;font-weight:800">supprimer</code> ci-dessous :</label>
+      <input type="text" id="delete-planning-confirm" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="supprimer">
+    </div>
+    <div class="modal-error" id="delete-planning-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeDeletePlanningModal()">Annuler</button>
+      <button class="modal-btn danger" type="button" id="delete-planning-confirm-btn" disabled onclick="confirmDeletePlanning()">Supprimer définitivement</button>
     </div>
   </div>
 </div>

@@ -329,11 +329,42 @@ async function renamePlanningPrompt() {
   }
 }
 
-async function deletePlanningPrompt() {
+// Type-to-confirm delete: opens a dedicated modal that requires the user to
+// type the word "supprimer" before the destructive button is enabled.  This
+// is intentionally heavier than a native confirm() because the action is
+// irreversible and easy to mis-tap on mobile.
+const DELETE_CONFIRM_WORD = 'supprimer';
+
+function deletePlanningPrompt() {
   if (!currentPlanningId) return;
   const current = planningsList.find((p) => p.id === currentPlanningId);
-  const label = current ? current.name : currentPlanningId;
-  if (!confirm(`Supprimer définitivement le planning « ${label} » ? Cette action est irréversible.`)) return;
+  if (!current) return;
+  $('delete-planning-name').textContent = current.name;
+  const input = $('delete-planning-confirm');
+  input.value = '';
+  $('delete-planning-error').textContent = '';
+  $('delete-planning-confirm-btn').disabled = true;
+  $('delete-planning-modal').classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+}
+
+function closeDeletePlanningModal() {
+  $('delete-planning-modal').classList.add('hidden');
+  $('delete-planning-confirm').value = '';
+  $('delete-planning-confirm-btn').disabled = true;
+  $('delete-planning-error').textContent = '';
+}
+
+async function confirmDeletePlanning() {
+  const input = $('delete-planning-confirm');
+  if (input.value.trim().toLowerCase() !== DELETE_CONFIRM_WORD) {
+    $('delete-planning-error').textContent = `Tapez exactement « ${DELETE_CONFIRM_WORD} » pour confirmer.`;
+    return;
+  }
+  if (!currentPlanningId) { closeDeletePlanningModal(); return; }
+  const btn = $('delete-planning-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Suppression…';
   try {
     await apiFetch(`${API_PLANNINGS}/${encodeURIComponent(currentPlanningId)}`, { method: 'DELETE' });
     rememberPlanningId(null);
@@ -343,8 +374,14 @@ async function deletePlanningPrompt() {
     else { currentState = null; $('planning-table').innerHTML = ''; updateProgress(); }
     renderPlanningSelector();
     setSyncStatus('ok', 'Planning supprimé ✓');
+    closeDeletePlanningModal();
+    showToast('Planning supprimé');
   } catch (e) {
-    alert(e.message || 'Erreur lors de la suppression');
+    $('delete-planning-error').textContent = e.message || 'Erreur lors de la suppression';
+  } finally {
+    btn.textContent = 'Supprimer définitivement';
+    // Re-enable only if the typed word still matches; otherwise leave disabled.
+    btn.disabled = input.value.trim().toLowerCase() !== DELETE_CONFIRM_WORD;
   }
 }
 
@@ -964,6 +1001,23 @@ async function init() {
     }
   });
 
+  const delInput = $('delete-planning-confirm');
+  const delBtn = $('delete-planning-confirm-btn');
+  if (delInput && delBtn) {
+    delInput.addEventListener('input', () => {
+      delBtn.disabled = delInput.value.trim().toLowerCase() !== DELETE_CONFIRM_WORD;
+      $('delete-planning-error').textContent = '';
+    });
+    delInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !delBtn.disabled) {
+        e.preventDefault();
+        confirmDeletePlanning();
+      } else if (e.key === 'Escape') {
+        closeDeletePlanningModal();
+      }
+    });
+  }
+
   const me = await loadMe();
   if (me) {
     await startAuthenticated();
@@ -990,6 +1044,8 @@ window.onPlanningSelectChange = onPlanningSelectChange;
 window.createPlanningPrompt  = createPlanningPrompt;
 window.renamePlanningPrompt  = renamePlanningPrompt;
 window.deletePlanningPrompt  = deletePlanningPrompt;
+window.closeDeletePlanningModal = closeDeletePlanningModal;
+window.confirmDeletePlanning = confirmDeletePlanning;
 window.sharePlanningUrl      = sharePlanningUrl;
 
 window.addEventListener('DOMContentLoaded', init);
