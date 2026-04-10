@@ -56,7 +56,7 @@
     flex-wrap: wrap;
   }
 
-  .header-left { display: flex; align-items: center; gap: 10px; }
+  .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .header-icon {
     width: 36px; height: 36px;
     background: rgba(255,255,255,0.15);
@@ -141,9 +141,29 @@
     transition: width 0.4s ease;
   }
 
-  .btn-print {
-    background: var(--amber);
+  .user-chip {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 20px;
+    padding: 4px 10px;
     color: white;
+    font-size: 7.5pt;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .user-chip .user-role {
+    background: rgba(255,255,255,0.22);
+    border-radius: 10px;
+    padding: 1px 6px;
+    font-size: 6.5pt;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .btn-print, .btn-reset, .btn-users, .btn-logout {
     border: none;
     padding: 6px 12px;
     border-radius: 6px;
@@ -156,25 +176,24 @@
     gap: 4px;
     transition: background 0.15s;
   }
+  .btn-print { background: var(--amber); color: white; }
   .btn-print:hover { background: var(--amber-lt); }
-
-  .btn-reset {
+  .btn-reset, .btn-users, .btn-logout {
     background: rgba(255,255,255,0.12);
     color: white;
     border: 1px solid rgba(255,255,255,0.28);
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-family: 'Nunito', sans-serif;
-    font-size: 7.5pt;
     font-weight: 700;
-    cursor: pointer;
-    transition: background 0.15s;
   }
-  .btn-reset:hover { background: rgba(255,255,255,0.22); }
+  .btn-reset:hover, .btn-users:hover, .btn-logout:hover { background: rgba(255,255,255,0.22); }
 
   /* ── TABLE ──────────────────────────────────────────────────── */
+  .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
   table {
     width: 100%;
+    min-width: 900px;
     border-collapse: collapse;
     table-layout: fixed;
   }
@@ -214,6 +233,7 @@
     vertical-align: top;
     padding: 5px 5px 4px;
     border: 1px solid var(--border);
+    position: relative;
   }
   tr.row-matin td.cell { background: var(--matin-bg); border-color: var(--matin-bd); }
   tr.row-repas td.cell { background: var(--repas-bg); border-color: var(--repas-bd); text-align:center; vertical-align:middle; }
@@ -246,6 +266,7 @@
     transition: background 0.12s;
     line-height: 1.35;
     user-select: none;
+    position: relative;
   }
   li.task:hover { background: rgba(0,0,0,0.06); }
   li.task:active { background: rgba(0,0,0,0.1); }
@@ -270,25 +291,38 @@
   li.task.done .chk { background: var(--done-clr); border-color: var(--done-clr); }
   li.task.done .chk::after { content:'✓'; font-size:7px; color:white; line-height:1; font-weight:900; }
 
-  .task-text { font-size: 7.3pt; line-height: 1.3; }
+  .task-text { font-size: 7.3pt; line-height: 1.3; flex: 1; }
 
-  .badge {
-    display: inline-block;
-    font-size: 5.5pt;
-    font-weight: 900;
-    padding: 1px 4px;
-    border-radius: 3px;
-    margin-left: 3px;
-    letter-spacing: 0.04em;
-    vertical-align: middle;
-    white-space: nowrap;
+  .task-menu-btn {
+    background: none;
+    border: none;
+    font-size: 10pt;
+    line-height: 1;
+    color: #666;
+    cursor: pointer;
+    padding: 0 3px;
+    opacity: 0;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
   }
-  .badge-alert { background: #E53935; color: white; }
-  .badge-warn  { background: var(--amber); color: white; }
-  .badge-ok    { background: var(--green); color: white; }
+  li.task:hover .task-menu-btn { opacity: 1; }
+  .task-menu-btn:hover { color: var(--navy); }
 
-  li.task.cancelled .task-text { text-decoration: line-through; color: #aaa; }
-  li.task.cancelled .chk { opacity: 0.3; pointer-events: none; }
+  .btn-add-task {
+    display: block;
+    width: 100%;
+    margin-top: 3px;
+    padding: 3px;
+    border: 1px dashed var(--border);
+    background: transparent;
+    border-radius: 3px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 7pt;
+    color: #888;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-add-task:hover { border-color: var(--navy); color: var(--navy); background: rgba(255,255,255,0.5); }
 
   /* ── LEGEND ─────────────────────────────────────────────────── */
   .legend {
@@ -310,6 +344,266 @@
   .ld-done  { background: var(--done-bg);  border: 1.5px solid var(--done-clr); }
   .legend-tip { margin-left:auto; color:#999; font-style:italic; font-size:6.5pt; }
 
+  /* ── LOGIN GATE ─────────────────────────────────────────────── */
+  .gate-backdrop {
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(135deg, #102338 0%, #1B3A5C 60%, #2563A8 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+  }
+  .gate-backdrop.hidden { display: none; }
+  .gate-card {
+    background: white;
+    border-radius: 14px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+    padding: 28px 26px;
+    max-width: 360px;
+    width: 100%;
+  }
+  .gate-card h2 {
+    font-family: 'Playfair Display', serif;
+    font-size: 18pt;
+    color: var(--navy);
+    margin-bottom: 6px;
+  }
+  .gate-card .gate-sub {
+    font-size: 9pt;
+    color: #777;
+    margin-bottom: 18px;
+  }
+  .gate-field { margin-bottom: 12px; }
+  .gate-field label {
+    display: block;
+    font-size: 8pt;
+    font-weight: 700;
+    color: var(--navy);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .gate-field input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 6px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 11pt;
+    transition: border-color 0.15s;
+  }
+  .gate-field input:focus {
+    outline: none;
+    border-color: var(--blue-ac);
+  }
+  .gate-error {
+    color: #D33;
+    font-size: 8.5pt;
+    font-weight: 700;
+    margin-bottom: 10px;
+    min-height: 1.2em;
+  }
+  .gate-submit {
+    width: 100%;
+    background: var(--navy);
+    color: white;
+    border: none;
+    padding: 12px;
+    border-radius: 6px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 10pt;
+    font-weight: 800;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .gate-submit:hover { background: var(--blue-ac); }
+  .gate-submit:disabled { background: #AAA; cursor: wait; }
+
+  /* ── MODAL (users management, edit, move) ──────────────────── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 900;
+    padding: 20px;
+  }
+  .modal-backdrop.hidden { display: none; }
+  .modal-card {
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    padding: 20px 22px;
+    max-width: 500px;
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+  }
+  .modal-card h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 14pt;
+    color: var(--navy);
+    margin-bottom: 12px;
+  }
+  .modal-field { margin-bottom: 10px; }
+  .modal-field label {
+    display: block;
+    font-size: 8pt;
+    font-weight: 700;
+    color: var(--navy);
+    margin-bottom: 3px;
+  }
+  .modal-field input, .modal-field select, .modal-field textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1.5px solid var(--border);
+    border-radius: 5px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 10pt;
+  }
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .modal-btn {
+    border: none;
+    padding: 8px 16px;
+    border-radius: 5px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 9pt;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .modal-btn.primary { background: var(--navy); color: white; }
+  .modal-btn.primary:hover { background: var(--blue-ac); }
+  .modal-btn.danger { background: #D33; color: white; }
+  .modal-btn.danger:hover { background: #B22; }
+  .modal-btn.ghost { background: #EEE; color: #444; }
+  .modal-btn.ghost:hover { background: #DDD; }
+
+  .users-list {
+    list-style: none;
+    margin: 10px 0 14px;
+    border-top: 1px solid var(--border);
+  }
+  .users-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9pt;
+  }
+  .users-list .u-name { font-weight: 800; flex: 1; }
+  .users-list .u-role {
+    font-size: 7pt;
+    font-weight: 800;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 10px;
+  }
+  .users-list .u-role.editor    { background: #FFE8CC; color: #C15F00; }
+  .users-list .u-role.validator { background: #DDEEFF; color: #1E4D90; }
+  .u-delete {
+    background: none;
+    border: none;
+    color: #D33;
+    cursor: pointer;
+    font-size: 10pt;
+    padding: 4px 6px;
+  }
+  .modal-error {
+    color: #D33;
+    font-size: 8.5pt;
+    font-weight: 700;
+    min-height: 1.2em;
+    margin-top: 4px;
+  }
+
+  /* Task menu popover */
+  .task-menu {
+    position: absolute;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    z-index: 500;
+    padding: 4px;
+    min-width: 140px;
+  }
+  .task-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 7px 10px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 8.5pt;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .task-menu button:hover { background: #EEF3F8; }
+  .task-menu button.danger { color: #D33; }
+
+  /* ── RESPONSIVE (mobile) ────────────────────────────────────── */
+  @media (max-width: 720px) {
+    body { padding: 4px; font-size: 9pt; }
+    .wrapper { border-radius: 6px; }
+    .page-header {
+      padding: 8px 10px;
+      gap: 8px;
+    }
+    .page-header h1 { font-size: 12pt; }
+    .page-header .subtitle { font-size: 7pt; }
+    .header-icon { width: 30px; height: 30px; font-size: 15px; }
+    .header-right {
+      width: 100%;
+      justify-content: flex-start;
+      gap: 6px;
+    }
+    .btn-print, .btn-reset, .btn-users, .btn-logout {
+      padding: 5px 9px;
+      font-size: 7pt;
+    }
+    .sync-badge, .progress-badge, .user-chip { font-size: 7pt; padding: 3px 8px; }
+    .progress-fill { width: 45px; }
+    .task-text { font-size: 9pt; }
+    .task-menu-btn {
+      opacity: 1;
+      font-size: 14pt;
+      padding: 2px 8px;
+    }
+    li.task { padding: 5px 4px; margin-bottom: 3px; }
+    .chk { width: 14px; height: 14px; min-width: 14px; }
+    li.task.done .chk::after { font-size: 10px; }
+    .day-name { font-size: 9pt; }
+    .day-date { font-size: 7pt; }
+    .day-j    { font-size: 6pt; }
+    td.slot-label { width: 22px; font-size: 6pt; }
+    td.cell { padding: 4px 4px 3px; }
+    .legend { gap: 8px; padding: 6px 10px; font-size: 7pt; }
+    .legend-tip { display: none; }
+    .gate-card { padding: 22px 20px; }
+    .gate-card h2 { font-size: 15pt; }
+    .modal-card { padding: 16px; max-height: 90vh; }
+  }
+
+  @media (max-width: 420px) {
+    .page-header h1 { font-size: 11pt; }
+    .page-header .subtitle { display: none; }
+    .btn-print, .btn-reset, .btn-users, .btn-logout span.btn-label { display: none; }
+    .user-chip { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  }
+
   /* ── PRINT ──────────────────────────────────────────────────── */
   @media print {
     body { background: white; padding: 0; font-size: 7pt; }
@@ -321,12 +615,87 @@
     li.task { padding: 1px 2px; margin-bottom: 1px; }
     .task-text { font-size: 6.5pt; }
     .repas-content { padding: 4px 0; }
+    .table-scroll { overflow: visible; }
+    table { min-width: 0; }
     @page { size: A4 landscape; margin: 5mm; }
   }
 </style>
 </head>
 <body>
 
+<!-- ═══ LOGIN GATE ════════════════════════════════════════════════ -->
+<div class="gate-backdrop" id="login-gate">
+  <div class="gate-card">
+    <h2>Planning BAFA</h2>
+    <div class="gate-sub">Connectez-vous pour accéder au planning</div>
+    <form id="login-form">
+      <div class="gate-field">
+        <label for="login-user">Identifiant</label>
+        <input type="text" id="login-user" autocomplete="username" required>
+      </div>
+      <div class="gate-field">
+        <label for="login-password">Mot de passe</label>
+        <input type="password" id="login-password" autocomplete="current-password" required>
+      </div>
+      <div class="gate-error" id="login-error"></div>
+      <button type="submit" class="gate-submit" id="login-submit">Se connecter</button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══ USERS MODAL ═══════════════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="users-modal">
+  <div class="modal-card">
+    <h3>Gestion des utilisateurs</h3>
+    <ul class="users-list" id="users-list"></ul>
+    <h3 style="font-size:11pt">Nouvel utilisateur</h3>
+    <div class="modal-field">
+      <label for="new-user-name">Identifiant</label>
+      <input type="text" id="new-user-name" autocomplete="off">
+    </div>
+    <div class="modal-field">
+      <label for="new-user-pwd">Mot de passe</label>
+      <input type="password" id="new-user-pwd" autocomplete="new-password">
+    </div>
+    <div class="modal-field">
+      <label for="new-user-role">Rôle</label>
+      <select id="new-user-role">
+        <option value="validator">Validateur (coche uniquement)</option>
+        <option value="editor">Éditeur (modifie le planning + gère les comptes)</option>
+      </select>
+    </div>
+    <div class="modal-error" id="users-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeUsersModal()">Fermer</button>
+      <button class="modal-btn primary" type="button" onclick="submitNewUser()">Créer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EDIT TASK MODAL ══════════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="edit-modal">
+  <div class="modal-card">
+    <h3 id="edit-modal-title">Modifier la tâche</h3>
+    <div class="modal-field">
+      <label for="edit-text">Texte</label>
+      <textarea id="edit-text" rows="3"></textarea>
+    </div>
+    <div class="modal-field" id="edit-location">
+      <label>Emplacement</label>
+      <div style="display:flex;gap:8px">
+        <select id="edit-day" style="flex:1"></select>
+        <select id="edit-slot" style="flex:1"></select>
+      </div>
+    </div>
+    <div class="modal-error" id="edit-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeEditModal()">Annuler</button>
+      <button class="modal-btn primary" type="button" id="edit-save-btn">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ APP ══════════════════════════════════════════════════════ -->
 <div class="wrapper">
 
   <!-- HEADER -->
@@ -347,144 +716,21 @@
         <div class="progress-fill"><div class="progress-bar" id="progress-bar"></div></div>
         <span id="progress-text">0 / 0</span>
       </div>
-      <button class="btn-reset" onclick="resetAll()">↺ Réinitialiser</button>
-      <button class="btn-print" onclick="window.print()">🖨 Imprimer</button>
+      <div class="user-chip" id="user-chip" style="display:none">
+        <span id="user-name"></span>
+        <span class="user-role" id="user-role-label"></span>
+      </div>
+      <button class="btn-users" id="btn-users" style="display:none" onclick="openUsersModal()">👥 <span class="btn-label">Utilisateurs</span></button>
+      <button class="btn-reset" id="btn-reset" style="display:none" onclick="resetAll()">↺ <span class="btn-label">Réinitialiser</span></button>
+      <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
+      <button class="btn-logout" id="btn-logout" style="display:none" onclick="logout()">⇦ <span class="btn-label">Quitter</span></button>
     </div>
   </div>
 
   <!-- TABLE -->
-  <table>
-    <thead>
-      <tr class="col-headers">
-        <th class="corner"></th>
-        <th class="weekend"><span class="day-j">J1</span><span class="day-name">Samedi</span><span class="day-date">11 avr</span></th>
-        <th><span class="day-j">J2</span><span class="day-name">Dimanche</span><span class="day-date">12 avr</span></th>
-        <th><span class="day-j">J3</span><span class="day-name">Lundi</span><span class="day-date">13 avr</span></th>
-        <th><span class="day-j">J4</span><span class="day-name">Mardi</span><span class="day-date">14 avr</span></th>
-        <th><span class="day-j">J5</span><span class="day-name">Mercredi</span><span class="day-date">15 avr</span></th>
-        <th><span class="day-j">J6</span><span class="day-name">Jeudi</span><span class="day-date">16 avr</span></th>
-        <th><span class="day-j">J7</span><span class="day-name">Vendredi</span><span class="day-date">17 avr</span></th>
-        <th class="weekend"><span class="day-j">J8</span><span class="day-name">Samedi</span><span class="day-date">18 avr</span></th>
-      </tr>
-    </thead>
-    <tbody>
-
-      <!-- ═══ MATIN ═══════════════════════════════════════════ -->
-      <tr class="row-matin">
-        <td class="slot-label sl-matin">Matin</td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Accueil &amp; Présentation du stage</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Jeux de présentation</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Affiches : PE, règles de vie, attentes, critères d'éval.</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Histoire / Schéma narratif</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Restitution de l'histoire</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Réglementation périscolaire / extrascolaire</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Réglementation Vélo + Mer</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Les différentes responsabilités</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 1</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Réglementation Bus + Camping</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Connaissance de l'enfant</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text"><em style="color:#888;font-size:6.5pt">À voir selon l'heure</em></span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Vie quotidienne (hygiène, repas, aide-moi…)</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Journée type (aide-mémoire)</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Les émotions</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Addictions</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu 2</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu (suite ↑)</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Kermesse <span class="badge badge-ok">Fiche tech</span></span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Quizz final</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Administratif</span></li>
-        </ul></td>
-      </tr>
-
-      <!-- ═══ REPAS ═════════════════════════════════════════════ -->
-      <tr class="row-repas">
-        <td class="slot-label sl-repas">Repas</td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-        <td class="cell"><div class="repas-content">🍽&nbsp;Repas</div></td>
-      </tr>
-
-      <!-- ═══ APRÈS-MIDI ════════════════════════════════════════ -->
-      <tr class="row-aprem">
-        <td class="slot-label sl-aprem">Après-midi</td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Éducation populaire</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Valeurs de la République &amp; Laïcité</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Personnages</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Forum + Prépa forum</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Les différents projets (PP, PE, PEDT, PA)</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Structure / Personnel</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Pharmacie / Assistant sanitaire</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ + Prépa HAJ</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 2</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 3</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">HAJ 4 <span class="badge badge-warn">?</span></span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">VSS</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">UNICEF</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Fiche technique</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu + Prépa grands jeux</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text"><strong>Éval mi-stage</strong> <span class="badge badge-alert">⚑ Éval</span></span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Communication</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">LAS / VS / Maltraitance / Addictions</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Handicap</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Vie affective &amp; sexuelle</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Répartition des mandats</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task cancelled" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Assistant Sacha <span class="badge badge-warn">annulé</span></span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Jeux sportifs</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Prépa veillée</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Repas de la veillée</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu 3</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Grand jeu 4 <span class="badge badge-warn">?</span></span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Rangement salle / Ménage</span></li>
-        </ul></td>
-        <td class="cell"><ul class="tasks">
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">CV + Lettre de motivation</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Questions / Bilan</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text">Bilan de stage</span></li>
-          <li class="task" onclick="toggle(this)"><span class="chk"></span><span class="task-text"><strong>FIN DU STAGE 🎉</strong> <span class="badge badge-ok">Fin</span></span></li>
-        </ul></td>
-      </tr>
-
-    </tbody>
-  </table>
+  <div class="table-scroll">
+    <table id="planning-table"></table>
+  </div>
 
   <!-- LEGEND -->
   <div class="legend no-print">
@@ -493,156 +739,11 @@
     <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
     <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
     <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
-    <span class="legend-item"><span class="badge badge-alert" style="font-size:6pt">⚑ Éval</span> Évaluation</span>
-    <span class="legend-item"><span class="badge badge-warn" style="font-size:6pt">?</span> À confirmer</span>
     <span class="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
   </div>
 
 </div>
 
-<script>
-  // ── CONFIG ────────────────────────────────────────────────────
-  const API     = '/api/state';
-  const POLL_MS = 5000; // check every 5 seconds
-
-  // ── STATE ─────────────────────────────────────────────────────
-  let lastUpdated  = 0;
-  let isSyncing    = false;
-  let pollTimer    = null;
-  let failCount    = 0;
-
-  // ── SYNC INDICATOR ────────────────────────────────────────────
-  function setSyncStatus(status, label) {
-    const badge = document.getElementById('sync-badge');
-    const text  = document.getElementById('sync-text');
-    badge.className = 'sync-badge ' + status;
-    text.textContent = label;
-  }
-
-  // ── PROGRESS ──────────────────────────────────────────────────
-  function updateProgress() {
-    const all  = document.querySelectorAll('li.task:not(.cancelled)');
-    const done = document.querySelectorAll('li.task.done:not(.cancelled)');
-    const pct  = all.length ? Math.round((done.length / all.length) * 100) : 0;
-    const bar  = document.getElementById('progress-bar');
-    const txt  = document.getElementById('progress-text');
-    if (bar) bar.style.width = pct + '%';
-    if (txt) txt.textContent = done.length + ' / ' + all.length;
-  }
-
-  // ── SERIALIZE STATE ───────────────────────────────────────────
-  function getState() {
-    const tasks = {};
-    document.querySelectorAll('li.task').forEach((el, i) => {
-      if (el.classList.contains('done')) tasks[String(i)] = true;
-    });
-    return { tasks, lastUpdated: Date.now() };
-  }
-
-  function applyState(state, animate) {
-    if (!state || !state.tasks) return;
-    document.querySelectorAll('li.task').forEach((el, i) => {
-      const should = !!state.tasks[String(i)];
-      const is     = el.classList.contains('done');
-      if (should !== is) {
-        el.classList.toggle('done', should);
-      }
-    });
-    lastUpdated = state.lastUpdated || 0;
-    updateProgress();
-  }
-
-  // ── API CALLS ─────────────────────────────────────────────────
-  async function fetchState() {
-    const res = await fetch(API, { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
-  }
-
-  async function pushState(state) {
-    const res = await fetch(API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state),
-    });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    return res.json();
-  }
-
-  // ── TOGGLE (user action) ──────────────────────────────────────
-  async function toggle(el) {
-    el.classList.toggle('done');
-    updateProgress();
-
-    setSyncStatus('syncing', 'Sauvegarde…');
-    isSyncing = true;
-    try {
-      const state = getState();
-      await pushState(state);
-      lastUpdated = state.lastUpdated;
-      failCount = 0;
-      setSyncStatus('ok', 'Synchronisé ✓');
-    } catch(e) {
-      failCount++;
-      setSyncStatus('error', 'Erreur de sync');
-    } finally {
-      isSyncing = false;
-    }
-  }
-
-  // ── POLL (receive changes from other users) ───────────────────
-  async function poll() {
-    if (isSyncing) return;
-    try {
-      const state = await fetchState();
-      if ((state.lastUpdated || 0) > lastUpdated) {
-        applyState(state, true);
-        setSyncStatus('ok', 'Synchronisé ✓');
-      } else {
-        setSyncStatus('ok', 'En ligne ✓');
-      }
-      failCount = 0;
-    } catch(e) {
-      failCount++;
-      if (failCount >= 3) {
-        setSyncStatus('offline', 'Hors ligne');
-      }
-    }
-  }
-
-  // ── RESET ─────────────────────────────────────────────────────
-  async function resetAll() {
-    if (!confirm('Réinitialiser tout le planning pour tout le monde ?')) return;
-    document.querySelectorAll('li.task.done').forEach(el => el.classList.remove('done'));
-    updateProgress();
-    setSyncStatus('syncing', 'Réinitialisation…');
-    try {
-      await pushState({ tasks: {}, lastUpdated: Date.now() });
-      lastUpdated = Date.now();
-      setSyncStatus('ok', 'Réinitialisé ✓');
-    } catch(e) {
-      setSyncStatus('error', 'Erreur');
-    }
-  }
-
-  // ── INIT ──────────────────────────────────────────────────────
-  async function init() {
-    setSyncStatus('syncing', 'Connexion…');
-    try {
-      const state = await fetchState();
-      applyState(state);
-      setSyncStatus('ok', 'En ligne ✓');
-      failCount = 0;
-    } catch(e) {
-      setSyncStatus('offline', 'Hors ligne');
-    }
-    pollTimer = setInterval(poll, POLL_MS);
-  }
-
-  window.addEventListener('DOMContentLoaded', init);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') poll();
-  });
-</script>
+<script src="app.js"></script>
 </body>
 </html>
