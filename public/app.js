@@ -619,4 +619,321 @@ async function resetAll() {
   }
 }
 
-// === PART 3 END — users modal + fetchState + poll + init in 4/4 ===
+// ── USERS MODAL ────────────────────────────────────────────────
+async function openUsersModal() {
+  $('users-modal').classList.remove('hidden');
+  $('users-error').textContent = '';
+  $('new-user-name').value = '';
+  $('new-user-pwd').value = '';
+  $('new-user-role').value = 'validator';
+  renderNewUserPlanningPicker();
+  await refreshUsersList();
+}
+
+function closeUsersModal() {
+  $('users-modal').classList.add('hidden');
+}
+
+function renderNewUserPlanningPicker() {
+  const list = $('new-user-plannings');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!planningsList.length) {
+    list.innerHTML = '<li style="color:#888">Aucun planning disponible</li>';
+    return;
+  }
+  for (const p of planningsList) {
+    const li = document.createElement('li');
+    const checked = p.id === currentPlanningId ? 'checked' : '';
+    li.innerHTML = `<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" value="${escapeHtml(p.id)}" ${checked}>
+      <span>${escapeHtml(p.name)}</span>
+    </label>`;
+    list.appendChild(li);
+  }
+}
+
+function getSelectedNewUserPlannings() {
+  const boxes = document.querySelectorAll('#new-user-plannings input[type="checkbox"]:checked');
+  return Array.from(boxes).map((b) => b.value);
+}
+
+async function refreshUsersList() {
+  const listEl = $('users-list');
+  listEl.innerHTML = '<li style="color:#888;justify-content:center">Chargement…</li>';
+  try {
+    const data = await apiFetch(API_USERS);
+    const users = Array.isArray(data.users) ? data.users : [];
+    listEl.innerHTML = '';
+    if (!users.length) {
+      listEl.innerHTML = '<li style="color:#888">Aucun utilisateur</li>';
+      return;
+    }
+    for (const u of users) {
+      const li = document.createElement('li');
+      li.style.flexDirection = 'column';
+      li.style.alignItems = 'stretch';
+      li.style.gap = '6px';
+
+      const header = document.createElement('div');
+      header.style.display = 'flex';
+      header.style.alignItems = 'center';
+      header.style.gap = '10px';
+      const isSelf = currentUser && u.user === currentUser.user;
+      const parentLabel = u.parent ? ` <span style="color:#888;font-weight:500;font-size:7pt">(créé par ${escapeHtml(u.parent)})</span>` : '';
+      header.innerHTML = `
+        <span class="u-name">${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}</span>
+        <span class="u-role ${u.role}">${u.role === 'editor' ? 'Éditeur' : 'Validateur'}</span>
+      `;
+      if (!isSelf) {
+        const del = document.createElement('button');
+        del.className = 'u-delete';
+        del.title = 'Supprimer (cascade)';
+        del.textContent = '🗑';
+        del.addEventListener('click', () => deleteUserAction(u.user));
+        header.appendChild(del);
+      }
+      li.appendChild(header);
+
+      // Planning access checkboxes for this user — only plannings visible to
+      // the caller are listed.  The caller can't toggle their own access.
+      if (planningsList.length) {
+        const access = document.createElement('ul');
+        access.className = 'planning-access-list';
+        for (const p of planningsList) {
+          const row = document.createElement('li');
+          const has = Array.isArray(u.plannings) && u.plannings.includes(p.id);
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = has;
+          cb.disabled = isSelf;
+          cb.addEventListener('change', async () => {
+            cb.disabled = true;
+            try {
+              if (cb.checked) {
+                await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}/plannings`, {
+                  method: 'POST',
+                  body: JSON.stringify({ planningId: p.id }),
+                });
+              } else {
+                await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}/plannings/${encodeURIComponent(p.id)}`, {
+                  method: 'DELETE',
+                });
+              }
+              $('users-error').textContent = '';
+            } catch (e) {
+              cb.checked = !cb.checked;
+              $('users-error').textContent = e.message || 'Erreur';
+            } finally {
+              cb.disabled = isSelf ? true : false;
+            }
+          });
+          const label = document.createElement('label');
+          label.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;flex:1';
+          label.appendChild(cb);
+          const span = document.createElement('span');
+          span.textContent = p.name;
+          label.appendChild(span);
+          row.appendChild(label);
+          access.appendChild(row);
+        }
+        li.appendChild(access);
+      }
+
+      listEl.appendChild(li);
+    }
+  } catch (e) {
+    listEl.innerHTML = `<li style="color:#D33">${escapeHtml(e.message || 'Erreur')}</li>`;
+  }
+}
+
+async function submitNewUser() {
+  const user = $('new-user-name').value.trim();
+  const password = $('new-user-pwd').value;
+  const role = $('new-user-role').value;
+  const plannings = getSelectedNewUserPlannings();
+  const errEl = $('users-error');
+  errEl.textContent = '';
+  try {
+    await apiFetch(API_USERS, {
+      method: 'POST',
+      body: JSON.stringify({ user, password, role, plannings }),
+    });
+    $('new-user-name').value = '';
+    $('new-user-pwd').value = '';
+    await refreshUsersList();
+  } catch (e) {
+    errEl.textContent = e.message || 'Erreur';
+  }
+}
+
+async function deleteUserAction(user) {
+  if (!confirm(`Supprimer l'utilisateur « ${user} » et tous ses sous-utilisateurs ?`)) return;
+  const errEl = $('users-error');
+  errEl.textContent = '';
+  try {
+    await apiFetch(`${API_USERS}/${encodeURIComponent(user)}`, { method: 'DELETE' });
+    await refreshUsersList();
+  } catch (e) {
+    errEl.textContent = e.message || 'Erreur';
+  }
+}
+
+// ── FETCH + POLL ───────────────────────────────────────────────
+async function fetchState() {
+  if (!currentPlanningId) { currentState = null; renderPlanning(); return null; }
+  const state = await apiFetch(withPlanning(API_STATE));
+  currentState = state;
+  lastVersion = state.version || 0;
+  renderPlanning();
+  return state;
+}
+
+async function poll() {
+  if (isSyncing) return;
+  if (!currentPlanningId) return;
+  try {
+    const state = await apiFetch(withPlanning(API_STATE));
+    if ((state.version || 0) !== lastVersion) {
+      currentState = state;
+      renderPlanning();
+    }
+    failCount = 0;
+    setSyncStatus('ok', currentUser ? 'En ligne ✓' : 'Lecture seule');
+  } catch (e) {
+    failCount++;
+    if (failCount >= 3) setSyncStatus('offline', 'Hors ligne');
+  }
+}
+
+// Pick the active planning given the list the user has access to.
+// Priority: URL ?planning=<id> > stored id > first in list.
+function pickInitialPlanningId(list) {
+  const urlId = new URLSearchParams(window.location.search).get('planning');
+  const stored = readStoredPlanningId();
+  const ids = list.map((p) => p.id);
+  if (urlId && ids.includes(urlId)) return urlId;
+  if (stored && ids.includes(stored)) return stored;
+  return list[0] ? list[0].id : null;
+}
+
+// ── INIT ───────────────────────────────────────────────────────
+async function startAuthenticated() {
+  hideLoginGate();
+  applyUserUI();
+  setSyncStatus('syncing', 'Connexion…');
+  try {
+    await loadPlanningsList();
+    const nextId = pickInitialPlanningId(planningsList);
+    rememberPlanningId(nextId);
+    renderPlanningSelector();
+    if (nextId) {
+      await fetchState();
+      setSyncStatus('ok', 'En ligne ✓');
+    } else {
+      currentState = null;
+      $('planning-table').innerHTML = '';
+      updateProgress();
+      setSyncStatus('ok', 'Aucun planning — créez-en un');
+    }
+    failCount = 0;
+  } catch (e) {
+    setSyncStatus('offline', 'Hors ligne');
+  }
+  applyUserUI();
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+async function startPublic() {
+  currentUser = null;
+  planningsList = [];
+  hideLoginGate();
+  applyUserUI();
+  setSyncStatus('syncing', 'Chargement…');
+  // Anonymous visitors can only view a planning whose id is in the URL
+  // (shareable read-only link).  If none, we leave the app empty with a
+  // login invitation.
+  const urlId = new URLSearchParams(window.location.search).get('planning');
+  if (urlId) rememberPlanningId(urlId);
+  else {
+    const stored = readStoredPlanningId();
+    if (stored) rememberPlanningId(stored);
+  }
+  try {
+    if (currentPlanningId) {
+      await fetchState();
+      setSyncStatus('ok', 'Lecture seule');
+    } else {
+      currentState = null;
+      renderPlanning();
+      setSyncStatus('ok', 'Connectez-vous pour voir un planning');
+    }
+    failCount = 0;
+  } catch (e) {
+    setSyncStatus('offline', 'Hors ligne');
+  }
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(poll, POLL_MS);
+}
+
+async function init() {
+  const table = $('planning-table');
+  table.addEventListener('click', onTableClick);
+
+  $('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const user = $('login-user').value.trim();
+    const password = $('login-password').value;
+    const errEl = $('login-error');
+    const submit = $('login-submit');
+    errEl.textContent = '';
+    submit.disabled = true;
+    submit.textContent = 'Connexion…';
+    try {
+      await login(user, password);
+      await startAuthenticated();
+    } catch (e) {
+      errEl.textContent = e.message || 'Erreur de connexion';
+    } finally {
+      submit.disabled = false;
+      submit.textContent = 'Se connecter';
+    }
+  });
+
+  $('edit-save-btn').addEventListener('click', submitEditModal);
+  $('edit-text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submitEditModal();
+    }
+  });
+
+  const me = await loadMe();
+  if (me) {
+    await startAuthenticated();
+  } else {
+    await startPublic();
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') poll();
+});
+
+// Expose functions used by inline onclick handlers
+window.openUsersModal        = openUsersModal;
+window.closeUsersModal       = closeUsersModal;
+window.submitNewUser         = submitNewUser;
+window.closeEditModal        = closeEditModal;
+window.resetAll              = resetAll;
+window.logout                = logout;
+window.openLoginGate         = openLoginGate;
+window.closeLoginGate        = closeLoginGate;
+window.toggleEditMode        = toggleEditMode;
+window.onPlanningSelectChange = onPlanningSelectChange;
+window.createPlanningPrompt  = createPlanningPrompt;
+window.renamePlanningPrompt  = renamePlanningPrompt;
+window.deletePlanningPrompt  = deletePlanningPrompt;
+
+window.addEventListener('DOMContentLoaded', init);
