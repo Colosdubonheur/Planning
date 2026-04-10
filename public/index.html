@@ -543,6 +543,42 @@
   }
   .users-list .u-role.directeur { background: #FFE8CC; color: #C15F00; }
   .users-list .u-role.formateur { background: #DDEEFF; color: #1E4D90; }
+  .users-list .u-role-select {
+    font-family: 'Nunito', sans-serif;
+    font-size: 7.5pt;
+    font-weight: 800;
+    text-transform: uppercase;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .users-list .u-role-select.directeur { background: #FFE8CC; color: #C15F00; border-color: #F4C89A; }
+  .users-list .u-role-select.formateur { background: #DDEEFF; color: #1E4D90; border-color: #B7D0EC; }
+  .users-list .u-role-select:disabled { opacity: 0.6; cursor: not-allowed; }
+  .users-list .u-auto {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 7.5pt;
+    font-weight: 700;
+    color: #666;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: #F3F5F9;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .users-list .u-auto.active {
+    background: #FFF3D6;
+    border-color: #F2D47C;
+    color: #8A5A00;
+  }
+  .users-list .u-auto input { margin: 0; }
+  .users-list .u-auto.disabled { opacity: 0.45; cursor: not-allowed; }
   .u-delete {
     background: none;
     border: none;
@@ -714,7 +750,7 @@
     background: #F7F9FC;
     border: 1px solid var(--border);
     border-radius: 5px;
-    max-height: 120px;
+    max-height: 160px;
     overflow-y: auto;
   }
   .planning-access-list li {
@@ -726,6 +762,30 @@
     border-bottom: none;
   }
   .planning-access-list input[type="checkbox"] { margin: 0; }
+  .planning-access-list li.unassigned label { color: #666; }
+  .planning-access-list li.access-toggle-row {
+    padding-top: 4px;
+    margin-top: 2px;
+    border-top: 1px dashed var(--border);
+  }
+  .planning-access-list .access-toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--navy);
+    cursor: pointer;
+    font-family: 'Nunito', sans-serif;
+    font-size: 8pt;
+    font-weight: 700;
+    padding: 2px 4px;
+    text-align: left;
+    width: 100%;
+  }
+  .planning-access-list .access-toggle-btn:hover { text-decoration: underline; }
+  .planning-access-list .access-empty {
+    color: #888;
+    font-style: italic;
+    font-size: 8pt;
+  }
 
   /* ── RESPONSIVE (mobile) ────────────────────────────────────── */
   @media (max-width: 720px) {
@@ -820,7 +880,7 @@
     <h3>Gestion des utilisateurs</h3>
     <p style="font-size:8pt;color:#666;margin-bottom:8px">Vous voyez vos sous-utilisateurs et leurs sous-utilisateurs. Cochez les plannings pour gérer les accès.</p>
     <ul class="users-list" id="users-list"></ul>
-    <h3 style="font-size:11pt">Nouveau sous-utilisateur</h3>
+    <h3 style="font-size:11pt" id="new-user-section-title">Nouveau sous-utilisateur</h3>
     <div class="modal-field">
       <label for="new-user-name">Identifiant</label>
       <input type="text" id="new-user-name" autocomplete="off">
@@ -829,17 +889,24 @@
       <label for="new-user-pwd">Mot de passe</label>
       <input type="password" id="new-user-pwd" autocomplete="new-password">
     </div>
-    <div class="modal-field">
+    <div class="modal-field" id="new-user-role-field">
       <label for="new-user-role">Rôle</label>
-      <select id="new-user-role">
+      <select id="new-user-role" onchange="onNewUserRoleChange()">
         <option value="formateur">Formateur (modifie le contenu et coche les tâches)</option>
         <option value="directeur">Directeur (crée/modifie les plannings, gère les sous-utilisateurs)</option>
       </select>
     </div>
+    <div class="modal-field" id="new-user-auto-field" style="display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+        <input type="checkbox" id="new-user-auto" style="margin:0">
+        <span>🎯 Ajouter automatiquement à tous les nouveaux plannings créés</span>
+      </label>
+      <p style="font-size:7.5pt;color:#666;margin-top:4px;line-height:1.4">Cochez pour faire de ce directeur un « super admin » qui aura accès à tout nouveau planning créé par l'équipe.</p>
+    </div>
     <div class="modal-field">
       <label>Plannings initiaux <span style="font-weight:500;color:#888">(optionnel)</span></label>
       <ul class="planning-access-list" id="new-user-plannings"></ul>
-      <p style="font-size:7.5pt;color:#666;margin-top:4px;line-height:1.4">💡 Laissez vide pour créer un directeur indépendant qui gérera ses propres plannings. Vous pourrez aussi lui donner accès plus tard.</p>
+      <p id="new-user-section-hint" style="font-size:7.5pt;color:#666;margin-top:4px;line-height:1.4">💡 Laissez vide pour créer un directeur indépendant qui gérera ses propres plannings. Vous pourrez aussi lui donner accès plus tard.</p>
     </div>
     <div class="modal-error" id="users-error"></div>
     <div class="modal-actions">

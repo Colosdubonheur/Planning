@@ -23,6 +23,10 @@ let failCount       = 0;
 let isSyncing       = false;
 let lastVersion     = 0;
 let editMode        = false;
+// Per-user expand state in the "Gestion des utilisateurs" modal: by default
+// each user row only shows the plannings they're assigned to; expanding a
+// row reveals the unassigned ones so the admin can grant new access.
+const expandedUserPlannings = new Set();
 
 // ── UTILS ──────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -283,6 +287,14 @@ function isOwnerOfCurrent() {
 // Can the current user create sub-users?  Directeur role only.
 function canManageUsers() {
   return isDirecteur();
+}
+
+// Is the current user the "master" of the hierarchy (the root user with no
+// parent)?  Only the master can create directeurs, toggle auto-assign, or
+// modify existing users' roles.  Regular directeurs are limited to creating
+// formateurs under themselves.
+function isMaster() {
+  return !!(currentUser && currentUser.isMaster === true);
 }
 
 // ── PLANNINGS (list, create, rename, delete, switch) ───────────
@@ -965,8 +977,44 @@ async function openUsersModal() {
   $('new-user-name').value = '';
   $('new-user-pwd').value = '';
   $('new-user-role').value = 'formateur';
+  const autoCb = $('new-user-auto');
+  if (autoCb) autoCb.checked = false;
+  // Reset the per-row expand state so the modal always opens in compact mode.
+  expandedUserPlannings.clear();
+
+  // Gate the role dropdown + auto-assign section on master status.
+  // Non-masters can only create formateurs so the dropdown is redundant.
+  const roleField = $('new-user-role-field');
+  const title = $('new-user-section-title');
+  const hint = $('new-user-section-hint');
+  if (roleField) roleField.style.display = isMaster() ? '' : 'none';
+  if (title) {
+    title.textContent = isMaster()
+      ? 'Nouveau sous-utilisateur'
+      : 'Nouveau formateur';
+  }
+  if (hint) {
+    hint.style.display = isMaster() ? '' : 'none';
+  }
+
+  onNewUserRoleChange();
   renderNewUserPlanningPicker();
   await refreshUsersList();
+}
+
+// Show/hide the auto-assign checkbox based on the selected role.  It only
+// applies to directeurs (formateurs can't own plannings so the flag would
+// be a no-op) AND only the master of the hierarchy can flip it.
+function onNewUserRoleChange() {
+  const field = $('new-user-auto-field');
+  const cb = $('new-user-auto');
+  if (!field || !cb) return;
+  if (isMaster() && $('new-user-role').value === 'directeur') {
+    field.style.display = '';
+  } else {
+    field.style.display = 'none';
+    cb.checked = false;
+  }
 }
 
 function closeUsersModal() {
@@ -997,6 +1045,16 @@ function getSelectedNewUserPlannings() {
   return Array.from(boxes).map((b) => b.value);
 }
 
+// Toggle a user row's "expand" state in the users modal.  Collapsed rows
+// only show the user's currently-assigned plannings; expanding reveals the
+// unassigned ones so the admin can grant access to more plannings without
+// leaving the modal.
+function toggleUserPlannings(user) {
+  if (expandedUserPlannings.has(user)) expandedUserPlannings.delete(user);
+  else expandedUserPlannings.add(user);
+  refreshUsersList();
+}
+
 async function refreshUsersList() {
   const listEl = $('users-list');
   listEl.innerHTML = '<li style="color:#888;justify-content:center">Chargement…</li>';
@@ -1018,12 +1076,109 @@ async function refreshUsersList() {
       header.style.display = 'flex';
       header.style.alignItems = 'center';
       header.style.gap = '10px';
+      header.style.flexWrap = 'wrap';
       const isSelf = currentUser && u.user === currentUser.user;
       const parentLabel = u.parent ? ` <span style="color:#888;font-weight:500;font-size:7pt">(créé par ${escapeHtml(u.parent)})</span>` : '';
-      header.innerHTML = `
-        <span class="u-name">${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}</span>
-        <span class="u-role ${u.role}">${u.role === 'directeur' ? 'Directeur' : 'Formateur'}</span>
-      `;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'u-name';
+      nameSpan.innerHTML = `${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}`;
+      header.appendChild(nameSpan);
+
+      const isTargetMaster = u.parent === null;
+      const canEditRoles = isMaster();
+
+      // Role control: editable dropdown for the master, static badge for
+      // regular directeurs (they can't change roles at all).  Self- and
+      // master-editing are always blocked — the master's role is locked
+      // and nobody can demote themselves.
+      if (canEditRoles && !isSelf && !isTargetMaster) {
+        const roleSel = document.createElement('select');
+        roleSel.className = `u-role-select ${u.role}`;
+        roleSel.title = 'Changer le rôle de cet utilisateur';
+        for (const r of ['formateur', 'directeur']) {
+          const opt = document.createElement('option');
+          opt.value = r;
+          opt.textContent = r === 'directeur' ? 'Directeur' : 'Formateur';
+          if (u.role === r) opt.selected = true;
+          roleSel.appendChild(opt);
+        }
+        roleSel.addEventListener('change', async () => {
+          const previous = u.role;
+          const next = roleSel.value;
+          roleSel.disabled = true;
+          try {
+            await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ role: next }),
+            });
+            $('users-error').textContent = '';
+            await refreshUsersList();
+          } catch (e) {
+            roleSel.value = previous;
+            $('users-error').textContent = e.message || 'Erreur';
+            roleSel.disabled = false;
+          }
+        });
+        header.appendChild(roleSel);
+      } else {
+        const badge = document.createElement('span');
+        badge.className = `u-role ${u.role}`;
+        badge.textContent = isTargetMaster
+          ? 'Maître'
+          : (u.role === 'directeur' ? 'Directeur' : 'Formateur');
+        if (isTargetMaster) badge.title = "Utilisateur maître de la structure";
+        header.appendChild(badge);
+      }
+
+      // Auto-assign toggle: master-only control, disabled on self and on
+      // the master themselves (whose auto-assign is implicit).  For
+      // non-master viewers we still display the current state (read-only)
+      // so they can see which directors are super-admins.
+      const autoLocked =
+        !canEditRoles || isSelf || isTargetMaster || u.role !== 'directeur';
+      const autoLbl = document.createElement('label');
+      autoLbl.className =
+        `u-auto${u.autoAssign ? ' active' : ''}${autoLocked ? ' disabled' : ''}`;
+      autoLbl.title = isTargetMaster
+        ? "Le maître est toujours auto-assigné"
+        : !canEditRoles
+        ? "Seul l'utilisateur maître peut modifier l'auto-ajout"
+        : isSelf
+        ? "Vous ne pouvez pas modifier votre propre auto-ajout"
+        : u.role !== 'directeur'
+        ? 'Réservé aux directeurs'
+        : 'Ajouter automatiquement à tous les nouveaux plannings créés';
+      const autoCb = document.createElement('input');
+      autoCb.type = 'checkbox';
+      autoCb.checked = !!u.autoAssign;
+      autoCb.disabled = autoLocked;
+      autoCb.addEventListener('change', async () => {
+        if (autoLocked) { autoCb.checked = !!u.autoAssign; return; }
+        const previous = !!u.autoAssign;
+        const next = autoCb.checked;
+        autoCb.disabled = true;
+        try {
+          await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ autoAssign: next }),
+          });
+          u.autoAssign = next;
+          autoLbl.classList.toggle('active', next);
+          $('users-error').textContent = '';
+        } catch (e) {
+          autoCb.checked = previous;
+          $('users-error').textContent = e.message || 'Erreur';
+        } finally {
+          autoCb.disabled = autoLocked;
+        }
+      });
+      autoLbl.appendChild(autoCb);
+      const autoText = document.createElement('span');
+      autoText.textContent = '🎯 Auto-ajout';
+      autoLbl.appendChild(autoText);
+      header.appendChild(autoLbl);
+
       if (!isSelf) {
         const del = document.createElement('button');
         del.className = 'u-delete';
@@ -1034,14 +1189,35 @@ async function refreshUsersList() {
       }
       li.appendChild(header);
 
-      // Planning access checkboxes for this user — only plannings visible to
-      // the caller are listed.  The caller can't toggle their own access.
+      // Planning access checkboxes.  By default the row is "collapsed" and
+      // only shows plannings this user is actually assigned to so the modal
+      // stays readable once the structure accumulates dozens of them.  A
+      // little "Afficher les N autres" button expands the row and reveals
+      // the unassigned plannings as greyed-out checkboxes the admin can
+      // click to grant access.
       if (planningsList.length) {
         const access = document.createElement('ul');
         access.className = 'planning-access-list';
-        for (const p of planningsList) {
+        const assignedSet = new Set(
+          Array.isArray(u.plannings) ? u.plannings : []
+        );
+        const expanded = expandedUserPlannings.has(u.user);
+        const visiblePlannings = expanded
+          ? planningsList
+          : planningsList.filter((p) => assignedSet.has(p.id));
+        const hiddenCount = planningsList.length - visiblePlannings.length;
+
+        if (visiblePlannings.length === 0) {
+          const empty = document.createElement('li');
+          empty.className = 'access-empty';
+          empty.textContent = "Aucun planning affecté.";
+          access.appendChild(empty);
+        }
+
+        for (const p of visiblePlannings) {
           const row = document.createElement('li');
-          const has = Array.isArray(u.plannings) && u.plannings.includes(p.id);
+          const has = assignedSet.has(p.id);
+          if (!has) row.className = 'unassigned';
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = has;
@@ -1054,10 +1230,12 @@ async function refreshUsersList() {
                   method: 'POST',
                   body: JSON.stringify({ planningId: p.id }),
                 });
+                row.classList.remove('unassigned');
               } else {
                 await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}/plannings/${encodeURIComponent(p.id)}`, {
                   method: 'DELETE',
                 });
+                row.classList.add('unassigned');
               }
               $('users-error').textContent = '';
             } catch (e) {
@@ -1076,6 +1254,23 @@ async function refreshUsersList() {
           row.appendChild(label);
           access.appendChild(row);
         }
+
+        // Expand / collapse toggle.  Only useful when there's actually
+        // something to fold or unfold.
+        if (expanded || hiddenCount > 0) {
+          const toggleRow = document.createElement('li');
+          toggleRow.className = 'access-toggle-row';
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'access-toggle-btn';
+          btn.textContent = expanded
+            ? '− Replier (afficher uniquement les plannings affectés)'
+            : `+ Afficher les ${hiddenCount} autre${hiddenCount > 1 ? 's' : ''} planning${hiddenCount > 1 ? 's' : ''}`;
+          btn.addEventListener('click', () => toggleUserPlannings(u.user));
+          toggleRow.appendChild(btn);
+          access.appendChild(toggleRow);
+        }
+
         li.appendChild(access);
       }
 
@@ -1089,17 +1284,22 @@ async function refreshUsersList() {
 async function submitNewUser() {
   const user = $('new-user-name').value.trim();
   const password = $('new-user-pwd').value;
-  const role = $('new-user-role').value;
+  // Non-masters can only create formateurs.  We also force that client-side
+  // so the UI matches the backend rule and avoids surprise 403s.
+  const role = isMaster() ? $('new-user-role').value : 'formateur';
+  const autoAssign =
+    isMaster() && role === 'directeur' && $('new-user-auto').checked;
   const plannings = getSelectedNewUserPlannings();
   const errEl = $('users-error');
   errEl.textContent = '';
   try {
     await apiFetch(API_USERS, {
       method: 'POST',
-      body: JSON.stringify({ user, password, role, plannings }),
+      body: JSON.stringify({ user, password, role, autoAssign, plannings }),
     });
     $('new-user-name').value = '';
     $('new-user-pwd').value = '';
+    $('new-user-auto').checked = false;
     await refreshUsersList();
   } catch (e) {
     errEl.textContent = e.message || 'Erreur';
@@ -1286,6 +1486,8 @@ document.addEventListener('visibilitychange', () => {
 window.openUsersModal        = openUsersModal;
 window.closeUsersModal       = closeUsersModal;
 window.submitNewUser         = submitNewUser;
+window.onNewUserRoleChange   = onNewUserRoleChange;
+window.toggleUserPlannings   = toggleUserPlannings;
 window.closeEditModal        = closeEditModal;
 window.resetAll              = resetAll;
 window.logout                = logout;

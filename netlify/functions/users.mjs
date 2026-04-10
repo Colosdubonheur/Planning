@@ -2,10 +2,12 @@ import {
   requireAuth,
   listUsersFor,
   createUser,
+  updateUser,
   deleteUserCascade,
   grantPlanningAccess,
   revokePlanningAccess,
   getUser,
+  getMasterUsername,
 } from "./_lib/auth.mjs";
 import {
   ensureMigration,
@@ -53,12 +55,27 @@ export default async (req) => {
     if (req.method === "POST" && !target) {
       let body;
       try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
-      const { user, password, role } = body || {};
+      const { user, password } = body || {};
+      let role = body && body.role;
+      let autoAssign = body && body.autoAssign;
       let plannings = Array.isArray(body && body.plannings) ? body.plannings : [];
 
       // If a single planningId is provided (current UI shortcut), use that.
       if (!plannings.length && body && typeof body.planningId === "string" && body.planningId) {
         plannings = [body.planningId];
+      }
+
+      // Role restrictions: only the master of the hierarchy can create
+      // directeurs.  Regular directeurs can only create formateurs under
+      // themselves.  Auto-assign is also master-only.
+      const masterName = await getMasterUsername();
+      const isActorMaster = masterName && masterName === actor.user;
+      if (!isActorMaster) {
+        if (role && role !== "formateur") {
+          return json({ error: "Seul l'utilisateur maître peut créer un directeur" }, { status: 403 });
+        }
+        role = "formateur";
+        autoAssign = false;
       }
 
       // Every requested planning must be accessible to the creator.
@@ -75,8 +92,23 @@ export default async (req) => {
         role,
         parent: actor.user,
         plannings,
+        autoAssign,
       });
       return json({ user: created }, { status: 201 });
+    }
+
+    // PATCH /api/users/:user — update role / autoAssign flag for a user in
+    // the caller's subtree.  Only directeurs can call this endpoint (enforced
+    // above); the lib checks subtree membership.
+    if ((req.method === "PATCH" || req.method === "PUT") && target && !subResource) {
+      let body;
+      try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
+      const visible = await listUsersFor(actor.user);
+      if (!visible.some((u) => u.user === target)) {
+        return json({ error: "Utilisateur hors de votre sous-arbre" }, { status: 403 });
+      }
+      const updated = await updateUser(target, body || {}, actor.user);
+      return json({ user: updated });
     }
 
     // DELETE /api/users/:user — delete a sub-user (and their subtree)
@@ -114,7 +146,7 @@ export default async (req) => {
     }
   } catch (e) {
     const message = e && e.message ? e.message : "Erreur interne";
-    const status = /permission|refus|sous-arbre|non accessible|pas accès/i.test(message) ? 403 : 400;
+    const status = /permission|refus|sous-arbre|non accessible|pas accès|maître/i.test(message) ? 403 : 400;
     return json({ error: message }, { status });
   }
 
