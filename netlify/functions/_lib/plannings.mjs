@@ -70,13 +70,14 @@ export async function ensureMigration() {
     legacy = null;
   }
 
-  // Pick an owner: first editor in the users store (ideally the bootstrap admin).
+  // Pick an owner: first directeur in the users store (ideally the bootstrap
+  // admin).  loadUsers() has already migrated legacy "editor" role strings.
   const usersStore = getUsersStore();
   const users = await ensureBootstrapAdmin(usersStore);
   let ownerId = null;
   let oldest = Infinity;
   for (const [name, rec] of Object.entries(users)) {
-    if (rec && rec.role === "editor") {
+    if (rec && rec.role === "directeur") {
       const created = rec.createdAt || 0;
       if (created < oldest) {
         oldest = created;

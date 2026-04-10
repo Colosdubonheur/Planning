@@ -200,26 +200,21 @@ function applyUserUI() {
   $('btn-login').style.display = 'none';
   $('user-chip').style.display = '';
   $('user-name').textContent = currentUser.user;
-  const roleLabel = currentUser.role === 'editor' ? 'Éditeur' : 'Validateur';
+  const roleLabel = currentUser.role === 'directeur' ? 'Directeur' : 'Formateur';
   $('user-role-label').textContent = roleLabel;
   $('btn-logout').style.display = '';
   if (picker) picker.style.display = '';
   // Share button is available to anyone logged in, regardless of role.
   $('btn-share-planning').style.display = currentPlanningId ? '' : 'none';
 
-  // Creating a new planning is open to everyone — the creator becomes its
-  // owner and gets full editing rights on it.  Managing sub-users remains
-  // gated by the global editor role (validators don't see the 👥 button).
-  $('btn-new-planning').style.display = '';
+  // Creating a new planning + managing sub-users: directeur role only.
+  $('btn-new-planning').style.display = isDirecteur() ? '' : 'none';
   $('btn-users').style.display = canManageUsers() ? '' : 'none';
 
-  // Per-planning actions depend on the current planning's ownership: owners
-  // always get the editor UI, even if their global role is "validator".
-  if (canEditCurrentPlanning()) {
+  // Edit mode (task content editing) is available to anyone assigned to the
+  // current planning — both directeurs and formateurs need it.
+  if (canEditContent()) {
     $('btn-edit-mode').style.display = '';
-    $('btn-reset').style.display = '';
-    $('btn-rename-planning').style.display = '';
-    $('btn-delete-planning').style.display = '';
     $('btn-edit-mode').classList.toggle('active', editMode);
     document.body.classList.toggle('edit-mode', editMode);
     if (tip) {
@@ -229,18 +224,23 @@ function applyUserUI() {
     }
   } else {
     $('btn-edit-mode').style.display = 'none';
-    $('btn-reset').style.display = 'none';
-    $('btn-rename-planning').style.display = 'none';
-    $('btn-delete-planning').style.display = 'none';
     editMode = false;
     document.body.classList.remove('edit-mode');
     if (tip) tip.textContent = '💡 Cliquez un item pour le cocher';
   }
+
+  // Owner-only actions on the current planning: reset, rename, delete.
+  // (setSchedule is triggered through the rename/edit modal, same gate.)
+  const owner = isOwnerOfCurrent();
+  $('btn-reset').style.display = owner ? '' : 'none';
+  $('btn-rename-planning').style.display = owner ? '' : 'none';
+  $('btn-delete-planning').style.display = owner ? '' : 'none';
+
   refreshEmptyState();
 }
 
 function toggleEditMode() {
-  if (!canEditCurrentPlanning()) return;
+  if (!canEditContent()) return;
   editMode = !editMode;
   document.body.classList.toggle('edit-mode', editMode);
   $('btn-edit-mode').classList.toggle('active', editMode);
@@ -249,19 +249,40 @@ function toggleEditMode() {
   setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
 }
 
-// Can the current user edit the currently selected planning?  True if they
-// are a global editor OR if they own the current planning (owner override).
-function canEditCurrentPlanning() {
-  if (!currentUser) return false;
-  if (currentUser.role === 'editor') return true;
-  const current = planningsList.find((p) => p.id === currentPlanningId);
-  return !!(current && current.ownerId === currentUser.user);
+// ── PERMISSION HELPERS ──────────────────────────────────────────
+// directeur: can create plannings, manage sub-users, and (when owning a
+//   planning) modify its dates/name, delete it, reset task state.
+// formateur: can only edit task content and tick tasks on plannings they've
+//   been assigned to.
+function isDirecteur() {
+  return !!(currentUser && currentUser.role === 'directeur');
 }
 
-// Can the current user create sub-users?  Global editor role only (the
-// users-management UI is not exposed to validators).
+// True when the user has an actual grant on the current planning (as opposed
+// to viewing it via a public share link).  Used to distinguish "editing
+// collaborator" from "read-only viewer".
+function hasAccessToCurrent() {
+  if (!currentUser || !currentPlanningId) return false;
+  return planningsList.some((p) => p.id === currentPlanningId);
+}
+
+// Can the current user edit task content on the current planning?  True for
+// both directeurs and formateurs as long as they're assigned to it.
+function canEditContent() {
+  return hasAccessToCurrent();
+}
+
+// Is the current user the owner (creator) of the current planning?
+// Owner-only gates: rename, delete, reset, setSchedule (dates/duration).
+function isOwnerOfCurrent() {
+  if (!currentUser || !currentPlanningId) return false;
+  const p = planningsList.find((x) => x.id === currentPlanningId);
+  return !!(p && p.ownerId === currentUser.user);
+}
+
+// Can the current user create sub-users?  Directeur role only.
 function canManageUsers() {
-  return !!(currentUser && currentUser.role === 'editor');
+  return isDirecteur();
 }
 
 // ── PLANNINGS (list, create, rename, delete, switch) ───────────
@@ -329,11 +350,16 @@ function refreshEmptyState() {
     btn.style.display = 'none';
     return;
   }
-  // Everyone can create a planning now — the creator becomes its owner and
-  // gets full editing rights on it regardless of their global role.
-  msg.textContent = "Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.";
-  btn.style.display = '';
-  btn.disabled = false;
+  if (isDirecteur()) {
+    msg.textContent = "Vous n'avez encore aucun planning. Créez-en un pour commencer à organiser votre stage.";
+    btn.style.display = '';
+    btn.disabled = false;
+  } else {
+    // Formateurs can't create their own plannings — they need a directeur
+    // to grant them access to an existing one.
+    msg.textContent = "Aucun planning ne vous a été attribué. Demandez à votre directeur de vous donner accès à un planning existant.";
+    btn.style.display = 'none';
+  }
 }
 
 async function onPlanningSelectChange(id) {
@@ -633,7 +659,7 @@ function renderPlanning() {
   closeTaskMenu();
 
   const { days, slots, tasks } = currentState;
-  const isEditor = canEditCurrentPlanning();
+  const isEditor = canEditContent();
   if (!table) return;
 
   // Header row
@@ -696,7 +722,7 @@ function onTableClick(e) {
   const li = e.target.closest('li.task');
   if (!li) return;
   const taskId = li.dataset.taskId;
-  if (editMode && canEditCurrentPlanning()) {
+  if (editMode && canEditContent()) {
     e.stopPropagation();
     openTaskMenu(taskId, li);
   } else {
@@ -938,7 +964,7 @@ async function openUsersModal() {
   $('users-error').textContent = '';
   $('new-user-name').value = '';
   $('new-user-pwd').value = '';
-  $('new-user-role').value = 'validator';
+  $('new-user-role').value = 'formateur';
   renderNewUserPlanningPicker();
   await refreshUsersList();
 }
@@ -996,7 +1022,7 @@ async function refreshUsersList() {
       const parentLabel = u.parent ? ` <span style="color:#888;font-weight:500;font-size:7pt">(créé par ${escapeHtml(u.parent)})</span>` : '';
       header.innerHTML = `
         <span class="u-name">${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}</span>
-        <span class="u-role ${u.role}">${u.role === 'editor' ? 'Éditeur' : 'Validateur'}</span>
+        <span class="u-role ${u.role}">${u.role === 'directeur' ? 'Directeur' : 'Formateur'}</span>
       `;
       if (!isSelf) {
         const del = document.createElement('button');

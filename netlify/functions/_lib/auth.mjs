@@ -63,7 +63,12 @@ export function verifyToken(token) {
   if (!payload || typeof payload !== "object") return null;
   if (typeof payload.exp !== "number" || payload.exp < Math.floor(Date.now() / 1000)) return null;
   if (!payload.user || !payload.role) return null;
-  return { user: payload.user, role: payload.role, exp: payload.exp };
+  // Back-compat with tokens issued before the role rename.  Keeps existing
+  // sessions valid after the upgrade.
+  let role = payload.role;
+  if (role === "editor") role = "directeur";
+  else if (role === "validator") role = "formateur";
+  return { user: payload.user, role, exp: payload.exp };
 }
 
 export function buildAuthCookie(token) {
@@ -100,6 +105,10 @@ export async function loadUsers(store) {
       if (!rec || typeof rec !== "object") continue;
       if (!Array.isArray(rec.plannings)) rec.plannings = [];
       if (rec.parent === undefined) rec.parent = null;
+      // Role rename migration (editor → directeur, validator → formateur).
+      // Persisted on the next saveUsers() call.
+      if (rec.role === "editor") rec.role = "directeur";
+      else if (rec.role === "validator") rec.role = "formateur";
     }
     return parsed;
   } catch {
@@ -119,7 +128,7 @@ export async function ensureBootstrapAdmin(store) {
   if (!adminUser || !adminPwd) return users;
   users[adminUser] = {
     passwordHash: hashPassword(adminPwd),
-    role: "editor",
+    role: "directeur",
     parent: null,
     plannings: [],
     createdAt: Date.now(),
@@ -187,7 +196,10 @@ export async function createUser({ user, password, role, parent, plannings }) {
   if (!user || !password || !role) throw new Error("user, password et role sont obligatoires");
   if (!/^[a-zA-Z0-9._-]{2,32}$/.test(user)) throw new Error("Identifiant invalide (2-32 caractères, alphanumérique)");
   if (password.length < 6) throw new Error("Mot de passe trop court (6 caractères minimum)");
-  if (role !== "editor" && role !== "validator") throw new Error("Rôle invalide");
+  // Back-compat: accept the old role names too, silently map them to the new ones.
+  if (role === "editor") role = "directeur";
+  else if (role === "validator") role = "formateur";
+  if (role !== "directeur" && role !== "formateur") throw new Error("Rôle invalide");
   const store = getUsersStore();
   const users = await loadUsers(store);
   if (users[user]) throw new Error("Ce nom d'utilisateur existe déjà");

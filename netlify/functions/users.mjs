@@ -27,9 +27,9 @@ export default async (req) => {
     return new Response(null, { status: 204, headers: jsonHeaders });
   }
 
-  // All /api/users routes require an editor role.  Validators are read-only
-  // task-tickers with no sub-user management rights.
-  const auth = requireAuth(req, { role: "editor" });
+  // All /api/users routes require the directeur role.  Formateurs can edit
+  // content on plannings they're assigned to but cannot create sub-users.
+  const auth = requireAuth(req, { role: "directeur" });
   if (auth.error) return auth.error;
   const actor = auth.user; // { user, role }
 

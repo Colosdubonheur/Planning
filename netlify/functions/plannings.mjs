@@ -41,10 +41,13 @@ export default async (req) => {
       return json({ plannings: list });
     }
 
-    // POST /api/plannings — create a new planning.  Any authenticated user
-    // can create one; they become its owner and therefore get full editing
-    // rights on that specific planning regardless of their global role.
+    // POST /api/plannings — create a new planning (directeurs only).
+    // Formateurs can edit content on plannings they're assigned to but
+    // cannot create their own.
     if (req.method === "POST" && !planningId) {
+      if (actor.role !== "directeur") {
+        return json({ error: "Seuls les directeurs peuvent créer un planning" }, { status: 403 });
+      }
       let body;
       try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
       const { name, startDate, dayCount } = body || {};

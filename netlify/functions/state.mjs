@@ -34,6 +34,16 @@ function applyOp(state, op, actor) {
     throw new Error("Opération manquante");
   }
 
+  // Permission model:
+  //   - Anyone with planning access can tick tasks and edit their content
+  //     (add/edit/remove/reorder/move) — this lets formateurs do their job.
+  //   - Structural / destructive ops (reset, setSchedule) are reserved to
+  //     the planning owner; only directeurs can ever be owners.
+  //   - Rename / delete are handled in plannings.mjs (also owner-only).
+  const requireOwner = () => {
+    if (!actor.isOwner) throw new Error("Permission refusée (propriétaire requis)");
+  };
+
   switch (op.op) {
     case "toggle": {
       const task = state.tasks.find((t) => t.id === op.taskId);
@@ -43,7 +53,6 @@ function applyOp(state, op, actor) {
     }
 
     case "edit": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       if (typeof op.text !== "string") throw new Error("Texte manquant");
@@ -55,7 +64,6 @@ function applyOp(state, op, actor) {
     }
 
     case "add": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const { dayId, slotId } = op;
       if (!state.days.some((d) => d.id === dayId)) throw new Error("Jour invalide");
       if (!state.slots.some((s) => s.id === slotId)) throw new Error("Créneau invalide");
@@ -77,7 +85,6 @@ function applyOp(state, op, actor) {
     }
 
     case "remove": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const idx = state.tasks.findIndex((t) => t.id === op.taskId);
       if (idx === -1) throw new Error("Tâche introuvable");
       const removed = state.tasks[idx];
@@ -87,7 +94,6 @@ function applyOp(state, op, actor) {
     }
 
     case "reorder": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       if (op.direction !== "up" && op.direction !== "down") {
@@ -107,7 +113,6 @@ function applyOp(state, op, actor) {
     }
 
     case "move": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       if (!state.days.some((d) => d.id === op.dayId)) throw new Error("Jour invalide");
@@ -129,13 +134,13 @@ function applyOp(state, op, actor) {
     }
 
     case "reset": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
+      requireOwner();
       for (const t of state.tasks) t.done = false;
       break;
     }
 
     case "setSchedule": {
-      if (actor.role !== "editor") throw new Error("Permission refusée");
+      requireOwner();
       const { startDate, dayCount } = op;
       const newDays = buildDaysFromStart(startDate, dayCount); // throws on invalid
       const keep = new Set(newDays.map((d) => d.id));
@@ -223,12 +228,10 @@ export default async (req) => {
     const meta = await getPlanningMeta(planningId);
     if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
 
-    // Owner override: whoever created the planning has full editing rights
-    // on it, even if their global role is "validator".  Other users keep
-    // their global role (validator = tick-only, editor = full).
-    const effectiveActor = meta.ownerId === actor.user
-      ? { ...actor, role: "editor" }
-      : actor;
+    // Pass ownership through to applyOp so destructive/structural ops
+    // (reset, setSchedule) can require it.  Content ops are always allowed
+    // for anyone who passed the access gate above.
+    const effectiveActor = { ...actor, isOwner: meta.ownerId === actor.user };
 
     try {
       const next = await updatePlanningState(planningId, (state) => {
