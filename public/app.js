@@ -12,6 +12,8 @@ const API_USERS     = '/api/users';
 const API_PLANNINGS = '/api/plannings';
 const POLL_MS = 2000;
 const STORAGE_PLANNING_KEY = 'planning:currentId';
+const STORAGE_HIDDEN_PREFIX = 'planning:hidden:'; // + username
+const STORAGE_SHOW_HIDDEN_PREFIX = 'planning:showHidden:'; // + username
 
 // ── STATE ──────────────────────────────────────────────────────
 let currentState    = null;  // { days, slots, tasks, version, lastUpdated, planningId, planningName }
@@ -23,6 +25,8 @@ let failCount       = 0;
 let isSyncing       = false;
 let lastVersion     = 0;
 let editMode        = false;
+let hiddenPlanningIds = new Set(); // ids the current user has collapsed from view
+let showHiddenPlannings = false;   // reveal hidden ones in the picker
 
 // ── UTILS ──────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -134,6 +138,112 @@ async function sharePlanningUrl() {
 
 function readStoredPlanningId() {
   try { return localStorage.getItem(STORAGE_PLANNING_KEY); } catch { return null; }
+}
+
+// ── HIDDEN PLANNINGS (per-user collapse list) ─────────────────
+// Stored in localStorage, scoped by username, so each user of a shared
+// browser keeps their own list.  Purely client-side — the back-end has
+// no notion of hidden plannings; they're just folded out of the UI.
+function hiddenStorageKey() {
+  if (!currentUser || !currentUser.user) return null;
+  return STORAGE_HIDDEN_PREFIX + currentUser.user;
+}
+
+function showHiddenStorageKey() {
+  if (!currentUser || !currentUser.user) return null;
+  return STORAGE_SHOW_HIDDEN_PREFIX + currentUser.user;
+}
+
+function loadHiddenPlannings() {
+  hiddenPlanningIds = new Set();
+  showHiddenPlannings = false;
+  const key = hiddenStorageKey();
+  if (!key) return;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const id of parsed) {
+          if (typeof id === 'string') hiddenPlanningIds.add(id);
+        }
+      }
+    }
+  } catch {}
+  try {
+    const raw = localStorage.getItem(showHiddenStorageKey());
+    showHiddenPlannings = raw === '1';
+  } catch {}
+}
+
+function persistHiddenPlannings() {
+  const key = hiddenStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(Array.from(hiddenPlanningIds)));
+  } catch {}
+}
+
+function persistShowHidden() {
+  const key = showHiddenStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, showHiddenPlannings ? '1' : '0');
+  } catch {}
+}
+
+// Keep the hidden set pruned to ids that still exist so stale entries
+// don't accumulate over time.
+function pruneHiddenPlannings() {
+  if (!hiddenPlanningIds.size) return;
+  const known = new Set(planningsList.map((p) => p.id));
+  let changed = false;
+  for (const id of Array.from(hiddenPlanningIds)) {
+    if (!known.has(id)) {
+      hiddenPlanningIds.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) persistHiddenPlannings();
+}
+
+// Hide or unhide the currently-selected planning from the picker.  The
+// user keeps access; the planning is just folded out of their default
+// view.  When the active planning is hidden we automatically switch to
+// the first visible one (or turn show-hidden on so the user isn't stuck
+// on a blank picker).
+async function toggleHideCurrentPlanning() {
+  if (!currentPlanningId) return;
+  if (hiddenPlanningIds.has(currentPlanningId)) {
+    hiddenPlanningIds.delete(currentPlanningId);
+    persistHiddenPlannings();
+    renderPlanningSelector();
+    showToast('Planning à nouveau visible');
+    return;
+  }
+  hiddenPlanningIds.add(currentPlanningId);
+  persistHiddenPlannings();
+  // If show-hidden is off, switch to the first non-hidden planning so
+  // the user isn't looking at something that's no longer in the list.
+  if (!showHiddenPlannings) {
+    const firstVisible = planningsList.find(
+      (p) => p.id !== currentPlanningId && !hiddenPlanningIds.has(p.id)
+    );
+    if (firstVisible) {
+      await onPlanningSelectChange(firstVisible.id);
+    } else {
+      renderPlanningSelector();
+    }
+  } else {
+    renderPlanningSelector();
+  }
+  showToast('Planning masqué');
+}
+
+function toggleShowHiddenPlannings() {
+  showHiddenPlannings = !showHiddenPlannings;
+  persistShowHidden();
+  renderPlanningSelector();
 }
 
 // ── AUTH ───────────────────────────────────────────────────────
@@ -301,30 +411,100 @@ function renderPlanningSelector() {
   const sel = $('planning-select');
   if (!sel) return;
   sel.innerHTML = '';
+  pruneHiddenPlannings();
+
+  // Work out which planning rows should appear in the <select>.
+  // - "show hidden" off  → only visible plannings, plus the current one
+  //   even if hidden (otherwise the dropdown would be out of sync with
+  //   what's actually displayed).
+  // - "show hidden" on   → everything, hidden ones marked with a prefix.
+  const visibleIds = new Set();
+  if (showHiddenPlannings) {
+    for (const p of planningsList) visibleIds.add(p.id);
+  } else {
+    for (const p of planningsList) {
+      if (!hiddenPlanningIds.has(p.id)) visibleIds.add(p.id);
+    }
+    if (currentPlanningId) visibleIds.add(currentPlanningId);
+  }
+
   if (!planningsList.length) {
     const opt = document.createElement('option');
     opt.value = '';
     opt.textContent = '(aucun)';
     sel.appendChild(opt);
   } else {
+    let hadOptions = false;
     for (const p of planningsList) {
+      if (!visibleIds.has(p.id)) continue;
       const opt = document.createElement('option');
       opt.value = p.id;
-      opt.textContent = p.name;
+      const isHidden = hiddenPlanningIds.has(p.id);
+      opt.textContent = isHidden ? `(masqué) ${p.name}` : p.name;
+      if (isHidden) opt.className = 'hidden-option';
       if (p.id === currentPlanningId) opt.selected = true;
+      sel.appendChild(opt);
+      hadOptions = true;
+    }
+    if (!hadOptions) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(tous masqués)';
       sel.appendChild(opt);
     }
   }
+
   const current = planningsList.find((p) => p.id === currentPlanningId);
+  const hiddenCount = planningsList.reduce(
+    (n, p) => n + (hiddenPlanningIds.has(p.id) ? 1 : 0),
+    0
+  );
+  const visibleCount = planningsList.length - hiddenCount;
+
   $('planning-title').textContent = current ? current.name : 'Planning';
+  const countParts = [];
+  countParts.push(`${visibleCount} visible${visibleCount > 1 ? 's' : ''}`);
+  if (hiddenCount > 0) countParts.push(`${hiddenCount} masqué${hiddenCount > 1 ? 's' : ''}`);
   $('planning-subtitle').textContent = current
-    ? `Planning synchronisé · ${planningsList.length} disponible${planningsList.length > 1 ? 's' : ''}`
+    ? `Planning synchronisé · ${countParts.join(' · ')}`
     : 'Aucun planning accessible';
 
   // Only the owner may rename/delete.
   const canOwn = current && currentUser && current.ownerId === currentUser.user;
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
+
+  // Hide-planning button: label changes based on current state.  Only
+  // available to authenticated users who actually have something to hide.
+  const hideBtn = $('btn-hide-planning');
+  if (hideBtn) {
+    if (!currentUser || !current) {
+      hideBtn.style.display = 'none';
+    } else {
+      hideBtn.style.display = '';
+      const hidden = hiddenPlanningIds.has(currentPlanningId);
+      hideBtn.textContent = hidden ? '👁‍🗨' : '🙈';
+      hideBtn.title = hidden
+        ? 'Afficher ce planning dans la liste'
+        : 'Masquer ce planning de la liste (il reste accessible)';
+    }
+  }
+
+  // Show-hidden toggle: only shown when there's something hidden to reveal
+  // (or when the toggle is already on).  The badge carries the hidden count.
+  const showBtn = $('btn-show-hidden');
+  if (showBtn) {
+    if (!currentUser || (hiddenCount === 0 && !showHiddenPlannings)) {
+      showBtn.style.display = 'none';
+    } else {
+      showBtn.style.display = '';
+      showBtn.setAttribute('data-count', String(hiddenCount));
+      showBtn.classList.toggle('active', showHiddenPlannings);
+      showBtn.title = showHiddenPlannings
+        ? `Replier les plannings masqués (${hiddenCount})`
+        : `Afficher les plannings masqués (${hiddenCount})`;
+    }
+  }
 
   refreshEmptyState();
 }
@@ -965,8 +1145,26 @@ async function openUsersModal() {
   $('new-user-name').value = '';
   $('new-user-pwd').value = '';
   $('new-user-role').value = 'formateur';
+  const autoCb = $('new-user-auto');
+  if (autoCb) autoCb.checked = false;
+  onNewUserRoleChange();
   renderNewUserPlanningPicker();
   await refreshUsersList();
+}
+
+// Show/hide the auto-assign checkbox based on the selected role.  It only
+// applies to directeurs (formateurs can't own plannings so the flag would
+// be a no-op).
+function onNewUserRoleChange() {
+  const field = $('new-user-auto-field');
+  const cb = $('new-user-auto');
+  if (!field || !cb) return;
+  if ($('new-user-role').value === 'directeur') {
+    field.style.display = '';
+  } else {
+    field.style.display = 'none';
+    cb.checked = false;
+  }
 }
 
 function closeUsersModal() {
@@ -1018,12 +1216,85 @@ async function refreshUsersList() {
       header.style.display = 'flex';
       header.style.alignItems = 'center';
       header.style.gap = '10px';
+      header.style.flexWrap = 'wrap';
       const isSelf = currentUser && u.user === currentUser.user;
       const parentLabel = u.parent ? ` <span style="color:#888;font-weight:500;font-size:7pt">(créé par ${escapeHtml(u.parent)})</span>` : '';
-      header.innerHTML = `
-        <span class="u-name">${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}</span>
-        <span class="u-role ${u.role}">${u.role === 'directeur' ? 'Directeur' : 'Formateur'}</span>
-      `;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'u-name';
+      nameSpan.innerHTML = `${escapeHtml(u.user)}${isSelf ? ' <span style="color:#888;font-weight:400">(vous)</span>' : parentLabel}`;
+      header.appendChild(nameSpan);
+
+      // Role dropdown (click to change).  Disabled for self since demoting
+      // yourself would instantly lock you out of the back-office.
+      const roleSel = document.createElement('select');
+      roleSel.className = `u-role-select ${u.role}`;
+      roleSel.title = isSelf
+        ? 'Vous ne pouvez pas modifier votre propre rôle'
+        : 'Changer le rôle de cet utilisateur';
+      roleSel.disabled = !!isSelf;
+      for (const r of ['formateur', 'directeur']) {
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.textContent = r === 'directeur' ? 'Directeur' : 'Formateur';
+        if (u.role === r) opt.selected = true;
+        roleSel.appendChild(opt);
+      }
+      roleSel.addEventListener('change', async () => {
+        const previous = u.role;
+        const next = roleSel.value;
+        roleSel.disabled = true;
+        try {
+          await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ role: next }),
+          });
+          $('users-error').textContent = '';
+          await refreshUsersList();
+        } catch (e) {
+          roleSel.value = previous;
+          $('users-error').textContent = e.message || 'Erreur';
+          roleSel.disabled = !!isSelf;
+        }
+      });
+      header.appendChild(roleSel);
+
+      // Auto-assign toggle: only meaningful on directeurs.  When on, the user
+      // gets automatic access to every newly-created planning.
+      const autoLbl = document.createElement('label');
+      autoLbl.className = `u-auto${u.autoAssign ? ' active' : ''}${u.role !== 'directeur' ? ' disabled' : ''}`;
+      autoLbl.title = u.role === 'directeur'
+        ? 'Ajouter automatiquement à tous les nouveaux plannings créés'
+        : 'Réservé aux directeurs';
+      const autoCb = document.createElement('input');
+      autoCb.type = 'checkbox';
+      autoCb.checked = !!u.autoAssign;
+      autoCb.disabled = u.role !== 'directeur';
+      autoCb.addEventListener('change', async () => {
+        const previous = !!u.autoAssign;
+        const next = autoCb.checked;
+        autoCb.disabled = true;
+        try {
+          await apiFetch(`${API_USERS}/${encodeURIComponent(u.user)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ autoAssign: next }),
+          });
+          u.autoAssign = next;
+          autoLbl.classList.toggle('active', next);
+          $('users-error').textContent = '';
+        } catch (e) {
+          autoCb.checked = previous;
+          $('users-error').textContent = e.message || 'Erreur';
+        } finally {
+          autoCb.disabled = u.role !== 'directeur';
+        }
+      });
+      autoLbl.appendChild(autoCb);
+      const autoText = document.createElement('span');
+      autoText.textContent = '🎯 Auto-ajout';
+      autoLbl.appendChild(autoText);
+      header.appendChild(autoLbl);
+
       if (!isSelf) {
         const del = document.createElement('button');
         del.className = 'u-delete';
@@ -1090,16 +1361,18 @@ async function submitNewUser() {
   const user = $('new-user-name').value.trim();
   const password = $('new-user-pwd').value;
   const role = $('new-user-role').value;
+  const autoAssign = role === 'directeur' && $('new-user-auto').checked;
   const plannings = getSelectedNewUserPlannings();
   const errEl = $('users-error');
   errEl.textContent = '';
   try {
     await apiFetch(API_USERS, {
       method: 'POST',
-      body: JSON.stringify({ user, password, role, plannings }),
+      body: JSON.stringify({ user, password, role, autoAssign, plannings }),
     });
     $('new-user-name').value = '';
     $('new-user-pwd').value = '';
+    $('new-user-auto').checked = false;
     await refreshUsersList();
   } catch (e) {
     errEl.textContent = e.message || 'Erreur';
@@ -1146,19 +1419,24 @@ async function poll() {
 }
 
 // Pick the active planning given the list the user has access to.
-// Priority: URL ?planning=<id> > stored id > first in list.
+// Priority: URL ?planning=<id> > stored id > first visible (non-hidden) > first in list.
+// Hidden plannings are honored only when no visible planning exists so
+// users aren't stranded with an empty picker.
 function pickInitialPlanningId(list) {
   const urlId = new URLSearchParams(window.location.search).get('planning');
   const stored = readStoredPlanningId();
   const ids = list.map((p) => p.id);
   if (urlId && ids.includes(urlId)) return urlId;
   if (stored && ids.includes(stored)) return stored;
+  const firstVisible = list.find((p) => !hiddenPlanningIds.has(p.id));
+  if (firstVisible) return firstVisible.id;
   return list[0] ? list[0].id : null;
 }
 
 // ── INIT ───────────────────────────────────────────────────────
 async function startAuthenticated() {
   hideLoginGate();
+  loadHiddenPlannings();
   applyUserUI();
   setSyncStatus('syncing', 'Connexion…');
   try {
@@ -1189,6 +1467,8 @@ async function startAuthenticated() {
 async function startPublic() {
   currentUser = null;
   planningsList = [];
+  hiddenPlanningIds = new Set();
+  showHiddenPlannings = false;
   hideLoginGate();
   applyUserUI();
   setSyncStatus('syncing', 'Chargement…');
@@ -1286,6 +1566,9 @@ document.addEventListener('visibilitychange', () => {
 window.openUsersModal        = openUsersModal;
 window.closeUsersModal       = closeUsersModal;
 window.submitNewUser         = submitNewUser;
+window.onNewUserRoleChange   = onNewUserRoleChange;
+window.toggleHideCurrentPlanning = toggleHideCurrentPlanning;
+window.toggleShowHiddenPlannings = toggleShowHiddenPlannings;
 window.closeEditModal        = closeEditModal;
 window.resetAll              = resetAll;
 window.logout                = logout;

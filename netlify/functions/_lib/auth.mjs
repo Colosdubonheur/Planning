@@ -109,6 +109,9 @@ export async function loadUsers(store) {
       // Persisted on the next saveUsers() call.
       if (rec.role === "editor") rec.role = "directeur";
       else if (rec.role === "validator") rec.role = "formateur";
+      // autoAssign: directors with this flag get granted access to every
+      // newly-created planning.  Defaults to false (added in a later version).
+      rec.autoAssign = rec.autoAssign === true;
     }
     return parsed;
   } catch {
@@ -131,6 +134,7 @@ export async function ensureBootstrapAdmin(store) {
     role: "directeur",
     parent: null,
     plannings: [],
+    autoAssign: true,
     createdAt: Date.now(),
   };
   await saveUsers(store, users);
@@ -186,13 +190,14 @@ export async function listUsersFor(viewer) {
         role: rec.role,
         parent: rec.parent || null,
         plannings: Array.isArray(rec.plannings) ? [...rec.plannings] : [],
+        autoAssign: rec.autoAssign === true,
         createdAt: rec.createdAt || 0,
       };
     })
     .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 }
 
-export async function createUser({ user, password, role, parent, plannings }) {
+export async function createUser({ user, password, role, parent, plannings, autoAssign }) {
   if (!user || !password || !role) throw new Error("user, password et role sont obligatoires");
   if (!/^[a-zA-Z0-9._-]{2,32}$/.test(user)) throw new Error("Identifiant invalide (2-32 caractères, alphanumérique)");
   if (password.length < 6) throw new Error("Mot de passe trop court (6 caractères minimum)");
@@ -218,11 +223,16 @@ export async function createUser({ user, password, role, parent, plannings }) {
     }
   }
 
+  // Only directeurs can be flagged as auto-assigned: formateurs can't create
+  // or own plannings, so the flag would be meaningless.
+  const autoAssignFlag = autoAssign === true && role === "directeur";
+
   users[user] = {
     passwordHash: hashPassword(password),
     role,
     parent: parent || null,
     plannings: initialPlannings,
+    autoAssign: autoAssignFlag,
     createdAt: Date.now(),
   };
   await saveUsers(store, users);
@@ -231,7 +241,61 @@ export async function createUser({ user, password, role, parent, plannings }) {
     role,
     parent: parent || null,
     plannings: [...initialPlannings],
+    autoAssign: autoAssignFlag,
     createdAt: users[user].createdAt,
+  };
+}
+
+// Update a user's mutable fields (role, autoAssign).  `by` must be in the
+// authenticated directeur's subtree (enforced by the caller beforehand is
+// fine, we double-check here too).  The caller cannot demote themselves from
+// directeur to formateur — that would lock them out of the back-office.
+export async function updateUser(user, updates, by) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  if (!users[user]) throw new Error("Utilisateur introuvable");
+  if (!users[by]) throw new Error("Utilisateur appelant introuvable");
+  if (!isInSubtree(user, by, users)) throw new Error("Permission refusée (hors sous-arbre)");
+
+  const rec = users[user];
+  let changed = false;
+
+  if (updates && typeof updates === "object") {
+    if (updates.role !== undefined) {
+      let role = updates.role;
+      if (role === "editor") role = "directeur";
+      else if (role === "validator") role = "formateur";
+      if (role !== "directeur" && role !== "formateur") throw new Error("Rôle invalide");
+      if (user === by && role !== "directeur") {
+        throw new Error("Impossible de rétrograder votre propre compte");
+      }
+      if (rec.role !== role) {
+        rec.role = role;
+        // Demoting to formateur drops the auto-assign flag automatically.
+        if (role !== "directeur" && rec.autoAssign) rec.autoAssign = false;
+        changed = true;
+      }
+    }
+    if (updates.autoAssign !== undefined) {
+      const next = updates.autoAssign === true;
+      if (next && rec.role !== "directeur") {
+        throw new Error("Seuls les directeurs peuvent être assignés automatiquement");
+      }
+      if ((rec.autoAssign === true) !== next) {
+        rec.autoAssign = next;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) await saveUsers(store, users);
+  return {
+    user,
+    role: rec.role,
+    parent: rec.parent || null,
+    plannings: Array.isArray(rec.plannings) ? [...rec.plannings] : [],
+    autoAssign: rec.autoAssign === true,
+    createdAt: rec.createdAt || 0,
   };
 }
 
@@ -314,6 +378,28 @@ export async function addPlanningToUser(user, planningId) {
   return [...cur];
 }
 
+// Grant every auto-assigned directeur access to `planningId` (used when a
+// new planning is created so "super admins" get automatic access without
+// manual sharing).  `excludeUser` is skipped (typically the creator, who
+// already gets access through addPlanningToUser).  Returns the list of
+// usernames that were touched.  Performs a single load/save round-trip.
+export async function addPlanningToAutoAssignUsers(planningId, excludeUser) {
+  const store = getUsersStore();
+  const users = await loadUsers(store);
+  const touched = [];
+  for (const [name, rec] of Object.entries(users)) {
+    if (!rec || rec.autoAssign !== true || rec.role !== "directeur") continue;
+    if (name === excludeUser) continue;
+    if (!Array.isArray(rec.plannings)) rec.plannings = [];
+    if (!rec.plannings.includes(planningId)) {
+      rec.plannings.push(planningId);
+      touched.push(name);
+    }
+  }
+  if (touched.length) await saveUsers(store, users);
+  return touched;
+}
+
 // Load a single user record (returns null if not found).
 export async function getUser(user) {
   const store = getUsersStore();
@@ -325,6 +411,7 @@ export async function getUser(user) {
     role: rec.role,
     parent: rec.parent || null,
     plannings: Array.isArray(rec.plannings) ? [...rec.plannings] : [],
+    autoAssign: rec.autoAssign === true,
     createdAt: rec.createdAt || 0,
   };
 }

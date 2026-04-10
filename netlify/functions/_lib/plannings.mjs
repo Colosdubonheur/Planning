@@ -3,6 +3,7 @@ import { updateJsonWithCAS } from "./cas.mjs";
 import { buildInitialState, buildEmptyState } from "./seed.mjs";
 import {
   addPlanningToUser,
+  addPlanningToAutoAssignUsers,
   removePlanningFromAllUsers,
   loadUsers,
   getUsersStore,
@@ -195,6 +196,14 @@ export async function createPlanning({ name, ownerId, startDate, dayCount }) {
   await saveIndex(store, index);
 
   await addPlanningToUser(ownerId, id);
+
+  // Auto-grant access to every directeur flagged as auto-assign
+  // ("super admins" / structure directors who must see every new planning).
+  // Best-effort: errors here don't invalidate the creation since the owner
+  // already has access.
+  try {
+    await addPlanningToAutoAssignUsers(id, ownerId);
+  } catch {}
 
   return toPublicMeta(index.plannings[id]);
 }

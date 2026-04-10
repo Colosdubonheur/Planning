@@ -543,6 +543,42 @@
   }
   .users-list .u-role.directeur { background: #FFE8CC; color: #C15F00; }
   .users-list .u-role.formateur { background: #DDEEFF; color: #1E4D90; }
+  .users-list .u-role-select {
+    font-family: 'Nunito', sans-serif;
+    font-size: 7.5pt;
+    font-weight: 800;
+    text-transform: uppercase;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .users-list .u-role-select.directeur { background: #FFE8CC; color: #C15F00; border-color: #F4C89A; }
+  .users-list .u-role-select.formateur { background: #DDEEFF; color: #1E4D90; border-color: #B7D0EC; }
+  .users-list .u-role-select:disabled { opacity: 0.6; cursor: not-allowed; }
+  .users-list .u-auto {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 7.5pt;
+    font-weight: 700;
+    color: #666;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background: #F3F5F9;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .users-list .u-auto.active {
+    background: #FFF3D6;
+    border-color: #F2D47C;
+    color: #8A5A00;
+  }
+  .users-list .u-auto input { margin: 0; }
+  .users-list .u-auto.disabled { opacity: 0.45; cursor: not-allowed; }
   .u-delete {
     background: none;
     border: none;
@@ -634,6 +670,38 @@
   }
   .planning-picker button:hover { background: rgba(255,255,255,0.3); }
   .planning-picker button.danger:hover { background: rgba(220,80,80,0.6); }
+  .planning-picker button.toggle.active {
+    background: rgba(255,255,255,0.42);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.6);
+  }
+  .planning-picker .hidden-count {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .planning-picker .hidden-count::after {
+    content: attr(data-count);
+    position: absolute;
+    top: -4px;
+    right: -6px;
+    background: #FFD84D;
+    color: #222;
+    font-size: 6pt;
+    font-weight: 900;
+    border-radius: 8px;
+    padding: 1px 4px;
+    min-width: 10px;
+    text-align: center;
+    line-height: 1.2;
+    pointer-events: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+  }
+  .planning-picker .hidden-count[data-count="0"]::after { display: none; }
+  .planning-picker select option.hidden-option {
+    color: #888;
+    font-style: italic;
+  }
 
   /* Empty state when no planning is accessible */
   .empty-state {
@@ -831,10 +899,17 @@
     </div>
     <div class="modal-field">
       <label for="new-user-role">Rôle</label>
-      <select id="new-user-role">
+      <select id="new-user-role" onchange="onNewUserRoleChange()">
         <option value="formateur">Formateur (modifie le contenu et coche les tâches)</option>
         <option value="directeur">Directeur (crée/modifie les plannings, gère les sous-utilisateurs)</option>
       </select>
+    </div>
+    <div class="modal-field" id="new-user-auto-field" style="display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700">
+        <input type="checkbox" id="new-user-auto" style="margin:0">
+        <span>🎯 Ajouter automatiquement à tous les nouveaux plannings créés</span>
+      </label>
+      <p style="font-size:7.5pt;color:#666;margin-top:4px;line-height:1.4">Cochez pour faire de ce directeur un « super admin » qui aura accès à tout nouveau planning créé par l'équipe.</p>
     </div>
     <div class="modal-field">
       <label>Plannings initiaux <span style="font-weight:500;color:#888">(optionnel)</span></label>
@@ -935,6 +1010,8 @@
         <select id="planning-select" onchange="onPlanningSelectChange(this.value)"></select>
         <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
+        <button type="button" id="btn-hide-planning" title="Masquer ce planning de la liste (il reste accessible)" onclick="toggleHideCurrentPlanning()">🙈</button>
+        <button type="button" id="btn-show-hidden" class="toggle hidden-count" data-count="0" title="Afficher les plannings masqués" onclick="toggleShowHiddenPlannings()">👁</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
       </div>
