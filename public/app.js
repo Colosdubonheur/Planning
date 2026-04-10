@@ -304,6 +304,48 @@ function todayIso() {
   return `${y}-${m}-${day}`;
 }
 
+// Best-effort start-date inference for legacy plannings that were migrated
+// from the old single-blob "state" and have no `startDate` field.  Parses
+// the J1 cell's "11 avr" + "Samedi" and finds the year whose weekday matches.
+const FR_MONTHS = {
+  'janv': 0, 'janvier': 0,
+  'fevr': 1, 'févr': 1, 'fevrier': 1, 'février': 1,
+  'mars': 2,
+  'avr': 3, 'avril': 3,
+  'mai': 4,
+  'juin': 5,
+  'juil': 6, 'juillet': 6,
+  'aout': 7, 'août': 7,
+  'sept': 8, 'septembre': 8,
+  'oct': 9, 'octobre': 9,
+  'nov': 10, 'novembre': 10,
+  'dec': 11, 'déc': 11, 'decembre': 11, 'décembre': 11,
+};
+
+function inferStartDateFromState(state) {
+  if (!state || !Array.isArray(state.days) || !state.days.length) return '';
+  const d1 = state.days[0];
+  if (!d1 || typeof d1.date !== 'string') return '';
+  const m = /^(\d{1,2})\s+([a-zàâéèêëîïôöùûüçÿ]+)\.?$/i.exec(d1.date.trim());
+  if (!m) return '';
+  const day = parseInt(m[1], 10);
+  const monthKey = m[2].toLowerCase().replace(/\.$/, '');
+  const month = FR_MONTHS[monthKey];
+  if (month === undefined) return '';
+  const expectedWeekday = String(d1.name || '').toLowerCase();
+  const fmtWeekday = new Intl.DateTimeFormat('fr-FR', { weekday: 'long' });
+  const now = new Date();
+  const candidates = [now.getFullYear(), now.getFullYear() + 1, now.getFullYear() - 1];
+  const toIso = (y) => `${y}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  for (const year of candidates) {
+    const date = new Date(year, month, day);
+    if (date.getMonth() !== month || date.getDate() !== day) continue;
+    const wd = fmtWeekday.format(date).toLowerCase();
+    if (!expectedWeekday || wd === expectedWeekday) return toIso(year);
+  }
+  return toIso(now.getFullYear());
+}
+
 function openPlanningSettingsModal(mode) {
   planningSettingsMode = mode;
   $('planning-settings-title').textContent = mode === 'create'
@@ -322,7 +364,10 @@ function openPlanningSettingsModal(mode) {
     const current = planningsList.find((p) => p.id === currentPlanningId);
     if (!current || !currentState) return;
     $('planning-settings-name').value = current.name || '';
-    $('planning-settings-start').value = currentState.startDate || '';
+    // Pre-fill from currentState; for legacy plannings (no startDate stored)
+    // try to infer it from the J1 label so the user doesn't have to retype.
+    $('planning-settings-start').value =
+      currentState.startDate || inferStartDateFromState(currentState) || '';
     $('planning-settings-days').value = String(currentState.days.length || 8);
   }
   $('planning-settings-modal').classList.remove('hidden');
@@ -365,17 +410,17 @@ async function submitPlanningSettings() {
   errEl.textContent = '';
 
   if (!name) { errEl.textContent = 'Nom obligatoire'; return; }
-  if (!startDate) { errEl.textContent = 'Date de début obligatoire'; return; }
-  if (!Number.isInteger(dayCount) || dayCount < 1 || dayCount > 31) {
-    errEl.textContent = 'Nombre de jours invalide (1 à 31)';
-    return;
-  }
+  const dayCountValid = Number.isInteger(dayCount) && dayCount >= 1 && dayCount <= 31;
 
   const submit = $('planning-settings-submit');
   submit.disabled = true;
 
   try {
     if (planningSettingsMode === 'create') {
+      // Both required at creation since the planning needs a calendar.
+      if (!startDate) { errEl.textContent = 'Date de début obligatoire'; return; }
+      if (!dayCountValid) { errEl.textContent = 'Nombre de jours invalide (1 à 31)'; return; }
+
       const data = await apiFetch(API_PLANNINGS, {
         method: 'POST',
         body: JSON.stringify({ name, startDate, dayCount }),
@@ -390,19 +435,40 @@ async function submitPlanningSettings() {
       if (!currentPlanningId || !currentState) throw new Error('Aucun planning sélectionné');
       const current = planningsList.find((p) => p.id === currentPlanningId);
       const nameChanged = !current || current.name !== name;
-      const datesChanged = (currentState.startDate || '') !== startDate
-        || currentState.days.length !== dayCount;
+      const currentStart = currentState.startDate || '';
+      const currentCount = currentState.days.length;
 
-      // If reducing day count, confirm task loss explicitly (in addition to the
-      // inline warning) — symmetric with the destructive-delete UX.
-      if (datesChanged && dayCount < currentState.days.length) {
-        const droppedDays = currentState.days.slice(dayCount);
-        const droppedIds = new Set(droppedDays.map((d) => d.id));
-        const droppedTasks = currentState.tasks.filter((t) => droppedIds.has(t.dayId)).length;
-        if (droppedTasks > 0 && !confirm(`Réduire à ${dayCount} jours supprimera ${droppedTasks} tâche${droppedTasks > 1 ? 's' : ''}. Continuer ?`)) {
-          submit.disabled = false;
+      // We only call setSchedule when the user actually wants to change the
+      // calendar — otherwise renaming alone is allowed even if the date
+      // field is empty (legacy plannings) or unchanged.
+      const datesChanged = startDate !== currentStart || dayCount !== currentCount;
+
+      if (datesChanged) {
+        if (!startDate) {
+          errEl.textContent = 'Date de début obligatoire pour modifier le calendrier';
           return;
         }
+        if (!dayCountValid) {
+          errEl.textContent = 'Nombre de jours invalide (1 à 31)';
+          return;
+        }
+        // Symmetric with the destructive-delete UX: an extra confirm() if any
+        // tasks would actually be lost.
+        if (dayCount < currentCount) {
+          const droppedDays = currentState.days.slice(dayCount);
+          const droppedIds = new Set(droppedDays.map((d) => d.id));
+          const droppedTasks = currentState.tasks.filter((t) => droppedIds.has(t.dayId)).length;
+          if (droppedTasks > 0 && !confirm(`Réduire à ${dayCount} jours supprimera ${droppedTasks} tâche${droppedTasks > 1 ? 's' : ''}. Continuer ?`)) {
+            submit.disabled = false;
+            return;
+          }
+        }
+      }
+
+      if (!nameChanged && !datesChanged) {
+        // Nothing to do — close silently.
+        closePlanningSettingsModal();
+        return;
       }
 
       if (nameChanged) {
