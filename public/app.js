@@ -662,6 +662,12 @@ function updateProgress() {
 
 // ── RENDER ─────────────────────────────────────────────────────
 function renderPlanning() {
+  // Keep the empty-state card / table visibility in sync with the current
+  // selection.  Without this, opening a share link as an anonymous visitor
+  // leaves the "Aucun planning" card visible on top of the freshly loaded
+  // table, because startPublic() shows the empty-state before the URL's
+  // planning id has been applied and nothing refreshes it afterwards.
+  refreshEmptyState();
   const table = $('planning-table');
   if (!currentState) {
     if (table) table.innerHTML = '';
@@ -1412,7 +1418,20 @@ async function startPublic() {
     }
     failCount = 0;
   } catch (e) {
-    setSyncStatus('offline', 'Hors ligne');
+    // A shared link pointed to a planning we can't load (deleted, wrong id,
+    // etc.).  Clear the stale id so the empty-state card shows, then
+    // override the message to tell the visitor exactly what happened — the
+    // default "Connectez-vous..." text is misleading in this case.
+    if (e && (e.status === 404 || e.status === 400)) {
+      rememberPlanningId(null);
+      currentState = null;
+      renderPlanning();
+      const msg = $('empty-state-message');
+      if (msg) msg.textContent = "Ce lien de partage n'est plus valide : le planning est introuvable ou a été supprimé.";
+      setSyncStatus('ok', 'Lecture seule');
+    } else {
+      setSyncStatus('offline', 'Hors ligne');
+    }
   }
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, POLL_MS);
