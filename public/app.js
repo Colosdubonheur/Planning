@@ -329,6 +329,7 @@ function renderPlanningSelector() {
   }
   const current = planningsList.find((p) => p.id === currentPlanningId);
   $('planning-title').textContent = current ? current.name : 'Planning';
+  document.title = current ? current.name : 'Planning';
   $('planning-subtitle').textContent = current
     ? `Planning synchronisé · ${planningsList.length} disponible${planningsList.length > 1 ? 's' : ''}`
     : 'Aucun planning accessible';
