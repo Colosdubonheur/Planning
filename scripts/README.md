@@ -9,6 +9,9 @@ Remplit un planning de **6 jours** avec le contenu du *Planning prévisionnel
 de formation BAFA approfondissement* (3 créneaux : matin / repas / après-midi,
 le créneau *Repas* n'étant pas éditable).
 
+**Version d'Océane** : le script ne touche que **J2..J6** (Mardi → Samedi).
+Le Lundi (J1) est déjà à jour dans le planning et n'est pas modifié.
+
 ### Utilisation
 
 1. Ouvre ton planning dans le navigateur (connecté comme directeur) :
@@ -25,8 +28,5 @@ En haut du script :
 
 - `PLANNING_ID` — auto-détecté depuis l'URL (`?planning=…`) ; à forcer au
   besoin.
-- `CLEAR_FIRST` — mettre `true` pour vider les cases J1..J6 avant d'importer
-  (utile si tu relances le script après un premier essai).
-
-Les tâches existantes dans les jours **au-delà de J6** ne sont jamais
-touchées.
+- `CLEAR_FIRST` — par défaut `true` : vide les cases J2..J6 avant d'importer
+  (le Lundi J1 n'est jamais vidé, ni les jours au-delà de J6).

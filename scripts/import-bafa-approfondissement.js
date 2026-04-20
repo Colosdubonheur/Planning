@@ -1,6 +1,11 @@
 // ═══════════════════════════════════════════════════════════════
 //   Import « Planning prévisionnel BAFA approfondissement »
-//   (6 jours — 3 créneaux Matin / Repas / Après-midi)
+//   Version d'Océane — Mardi → Samedi (J2..J6)
+//
+//   ⚠ Le Lundi (J1) n'est PAS touché par ce script : il est déjà
+//   à jour dans le planning actuel. Seuls les jours présents dans
+//   SCHEDULE ci-dessous sont vidés (si CLEAR_FIRST = true) puis
+//   remplis.
 //
 //   Mode d'emploi
 //   ─────────────
@@ -16,91 +21,79 @@
 //
 //   Variables à ajuster éventuellement :
 //     PLANNING_ID : auto-détecté depuis l'URL, ou à forcer ci-dessous.
-//     CLEAR_FIRST : true pour vider les cases J1..J6 avant import.
+//     CLEAR_FIRST : true pour vider les cases J2..J6 avant import
+//                   (le Lundi J1 n'est jamais vidé).
 // ═══════════════════════════════════════════════════════════════
 
 (async () => {
   const PLANNING_ID =
     new URLSearchParams(location.search).get('planning') ||
     'pl_mo5wbkvm_0nu55z';
-  const CLEAR_FIRST = false;
+  const CLEAR_FIRST = true;
 
-  // ── Contenu du planning (image fournie) ──────────────────────
+  // ── Contenu du planning (version Océane) ─────────────────────
+  //   Seuls J2..J6 sont redéfinis ; J1 (Lundi) reste intact.
   const SCHEDULE = {
-    j1: {
-      matin: [
-        'Accueil, Présentation stage et tour de table',
-        'Jeux présentation',
-        "Affiches : PE règles de vie, thèmes, attentes, matériel, fonctions animateur, critères éval",
-      ],
-      aprem: [
-        'Quizz 1 et rappels réglementaires',
-        'Forum et prépa',
-        'BSP : présentation structures, PP, PE, PA : format histoire',
-      ],
-    },
     j2: {
       matin: [
         'Forum',
-        'BSP : communication, relations, projets des mineurs',
-        'BSP : Journée type, organisation',
+        'BSP : Foire aux activités réalisées en stage pratique (10-15 min prép)',
+        'BSP : Les contrats, embauche',
+        'Thème de stage — 2 groupes',
       ],
       aprem: [
-        'AI (Animation individuelle) : prépa',
-        'Thème de stage',
-        'BSP : foire aux activités réalisées en stage pratique',
-        'BSP : les contrats, embauche',
+        'BSP : Communication / Relations / projet',
+        'BSP : Journée type + organisation',
+        'Les responsabilités',
+        'Animation individuelle + Prépa',
       ],
     },
     j3: {
       matin: [
         'Forum',
-        'BSP : Handicap, maltraitance, VSS, VRI, harcèlement',
-        'Thème de stage',
+        'Intervention MARIE',
       ],
       aprem: [
-        'Animations individuelles',
-        'Thème de stage',
-        'BSP : Prépa grand projet',
-        'Mi-stage',
+        'Animation individuelle',
+        'Thème de stage — 1 ou 2',
+        'BSP : Grands jeux',
+        'Prépa grands jeux + mi-stage',
       ],
     },
     j4: {
       matin: [
         'Forum',
-        'Intervention ASE / VEO / VSS',
-        'Thème de stage',
+        'Thème de stage — 1 ou 2',
+        'Création jeu de société',
       ],
       aprem: [
-        'Création de jeux de société',
-        'BSP : LAS, MS, addictions',
-        'Les responsabilités',
+        'BSP : Liberté / autrui / sanction + Addictions — 2 groupes',
+        'Prépa veillée',
+        'Veillée',
       ],
     },
     j5: {
       matin: [
         'Forum',
-        'Thème de stage',
-        'Grand projet 1',
+        'Grand jeu 1',
+        'Grand jeu 2',
       ],
       aprem: [
-        'Grand projet 2',
-        'Prépa',
-        'Jeu exceptionnel',
-        'Repas animé',
-        'Jeux de soirée',
+        'Grand jeu 3',
+        'Grand jeu 4',
+        'Thème de stage',
+        'Rangement / Ménage',
       ],
     },
     j6: {
       matin: [
-        'Forum',
-        'Quizz final',
-        'Jeux de société',
+        'Quizz',
+        'Kermesse',
+        'Administratif',
       ],
       aprem: [
-        'Administratif',
-        'Evaluations',
-        'Fin de stage',
+        'Ménage finalisé',
+        'Bilan — Évaluation',
       ],
     },
   };
