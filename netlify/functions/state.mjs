@@ -8,14 +8,35 @@ import {
   userHasAccess,
 } from "./_lib/plannings.mjs";
 import { buildDaysFromStart } from "./_lib/seed.mjs";
+import { corsFor, withCors } from "./_lib/cors.mjs";
+import { addSnapshot, netlifySnapshotData } from "./_lib/history.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
+
+let corsHeaders = {}; // set per request (functions handle one request at a time)
 
 function json(body, init = {}) {
   return new Response(JSON.stringify(body), {
     ...init,
-    headers: { ...jsonHeaders, ...(init.headers || {}) },
+    headers: { ...jsonHeaders, ...corsHeaders, ...(init.headers || {}) },
   });
+}
+
+const MAX_TEXT = 300;
+const MAX_ANIMA_ID = 300;
+
+function cleanText(raw) {
+  if (typeof raw !== "string") throw new Error("Texte manquant");
+  const text = raw.trim();
+  if (!text) throw new Error("Le texte ne peut pas être vide");
+  if (text.length > MAX_TEXT) throw new Error(`Texte trop long (${MAX_TEXT} caractères max)`);
+  return text;
+}
+
+function cleanAnimaId(raw) {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw !== "string" || raw.length > MAX_ANIMA_ID) throw new Error("animaId invalide");
+  return raw;
 }
 
 function newTaskId() {
@@ -55,11 +76,7 @@ function applyOp(state, op, actor) {
     case "edit": {
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
-      if (typeof op.text !== "string") throw new Error("Texte manquant");
-      const text = op.text.trim();
-      if (!text) throw new Error("Le texte ne peut pas être vide");
-      if (text.length > 300) throw new Error("Texte trop long (300 caractères max)");
-      task.text = text;
+      task.text = cleanText(op.text);
       break;
     }
 
@@ -68,19 +85,13 @@ function applyOp(state, op, actor) {
       if (!state.days.some((d) => d.id === dayId)) throw new Error("Jour invalide");
       if (!state.slots.some((s) => s.id === slotId)) throw new Error("Créneau invalide");
       if (slotId === "repas") throw new Error("Le créneau Repas n'est pas éditable");
-      const text = (op.text || "").trim();
-      if (!text) throw new Error("Le texte ne peut pas être vide");
-      if (text.length > 300) throw new Error("Texte trop long (300 caractères max)");
+      const text = cleanText(op.text || "");
+      const animaId = cleanAnimaId(op.animaId);
       const existing = state.tasks.filter((t) => t.dayId === dayId && t.slotId === slotId);
       const order = existing.length;
-      state.tasks.push({
-        id: newTaskId(),
-        dayId,
-        slotId,
-        order,
-        text,
-        done: false,
-      });
+      const task = { id: newTaskId(), dayId, slotId, order, text, done: false };
+      if (animaId) task.animaId = animaId;
+      state.tasks.push(task);
       break;
     }
 
@@ -122,14 +133,64 @@ function applyOp(state, op, actor) {
       const oldSlotId = task.slotId;
       task.dayId = op.dayId;
       task.slotId = op.slotId;
-      const destCount = state.tasks.filter(
-        (t) => t.dayId === op.dayId && t.slotId === op.slotId && t.id !== task.id
-      ).length;
-      task.order = destCount;
+      // Destination column without the moved task, in display order.
+      const dest = state.tasks
+        .filter((t) => t.dayId === op.dayId && t.slotId === op.slotId && t.id !== task.id)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      // Optional insertion index (drag & drop); default: end of column.
+      let index = Number.isInteger(op.index) ? op.index : dest.length;
+      index = Math.max(0, Math.min(dest.length, index));
+      dest.splice(index, 0, task);
+      dest.forEach((t, i) => { t.order = i; });
       if (oldDayId !== op.dayId || oldSlotId !== op.slotId) {
         reorderColumn(state, oldDayId, oldSlotId);
       }
-      reorderColumn(state, op.dayId, op.slotId);
+      break;
+    }
+
+    // Replace the whole content of the planning in one go (used by the
+    // Anima synchronisation).  `op.tasks` is the full desired list, in
+    // display order: [{ dayId, slotId, text, animaId? }].  Existing tasks
+    // are matched (by animaId first, then by text within the same cell,
+    // then by text anywhere) so their id and "done" state survive.
+    case "replaceAll": {
+      requireOwner();
+      if (!Array.isArray(op.tasks)) throw new Error("Liste de tâches manquante");
+      if (op.tasks.length > 1000) throw new Error("Trop de tâches");
+      const dayIds = new Set(state.days.map((d) => d.id));
+      const slotIds = new Set(state.slots.map((s) => s.id));
+      const pool = state.tasks.slice();
+      const take = (pred) => {
+        const i = pool.findIndex(pred);
+        return i === -1 ? null : pool.splice(i, 1)[0];
+      };
+      const next = [];
+      const counters = {};
+      for (const raw of op.tasks) {
+        if (!raw || typeof raw !== "object") throw new Error("Tâche invalide");
+        const { dayId, slotId } = raw;
+        if (!dayIds.has(dayId)) throw new Error(`Jour invalide: ${dayId}`);
+        if (!slotIds.has(slotId) || slotId === "repas") throw new Error(`Créneau invalide: ${slotId}`);
+        const text = cleanText(raw.text);
+        const animaId = cleanAnimaId(raw.animaId);
+        const prev =
+          (animaId && take((t) => t.animaId === animaId)) ||
+          take((t) => t.dayId === dayId && t.slotId === slotId && t.text === text) ||
+          take((t) => !t.animaId && t.text === text);
+        const key = dayId + "|" + slotId;
+        const order = counters[key] = (counters[key] ?? -1) + 1;
+        const task = {
+          id: prev ? prev.id : newTaskId(),
+          dayId,
+          slotId,
+          order,
+          text,
+          done: prev ? !!prev.done : false,
+        };
+        if (animaId) task.animaId = animaId;
+        next.push(task);
+      }
+      state.tasks = next;
       break;
     }
 
@@ -183,8 +244,9 @@ async function resolvePlanningId(url, body, actorUser) {
 }
 
 export default async (req) => {
+  corsHeaders = corsFor(req);
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: jsonHeaders });
+    return new Response(null, { status: 204, headers: { ...jsonHeaders, ...corsHeaders } });
   }
 
   await ensureMigration();
@@ -211,15 +273,20 @@ export default async (req) => {
 
   // ── POST /api/state ────────────────────────────────────────────
   if (req.method === "POST") {
-    const auth = requireAuth(req);
-    if (auth.error) return auth.error;
-    const actor = auth.user; // { user, role }
+    const auth = requireAuth(req, { allowSync: true });
+    if (auth.error) return withCors(auth.error, corsHeaders);
+    const actor = auth.user; // { user, role, scope?, planningId? }
 
     let body;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
 
     const planningId = await resolvePlanningId(url, body, actor.user);
     if (!planningId) return json({ error: "Paramètre 'planning' requis" }, { status: 400 });
+
+    // A sync token only works on the planning it was issued for.
+    if (actor.scope === "sync" && actor.planningId !== planningId) {
+      return json({ error: "Jeton de synchro invalide pour ce planning" }, { status: 403 });
+    }
 
     // Access control.
     const hasAccess = await userHasAccess(actor.user, planningId);
@@ -233,10 +300,30 @@ export default async (req) => {
     // for anyone who passed the access gate above.
     const effectiveActor = { ...actor, isOwner: meta.ownerId === actor.user };
 
+    // Bulk replacement (Anima sync, version restore): keep a copy of what is
+    // about to be overwritten.  Saved only once the replacement succeeded,
+    // best-effort (never blocks the operation).
+    let before = null;
+    if (body.op === "replaceAll" && effectiveActor.isOwner) {
+      try { before = await getPlanningState(planningId); } catch {}
+    }
+
     try {
       const next = await updatePlanningState(planningId, (state) => {
         return applyOp(state, body, effectiveActor);
       });
+      if (before) {
+        try {
+          await addSnapshot(planningId, {
+            source: "netlify",
+            label: typeof body.reason === "string" ? body.reason : "Avant remplacement",
+            by: actor.user,
+            data: netlifySnapshotData(before),
+          });
+        } catch (e) {
+          console.error("snapshot failed", e);
+        }
+      }
       return json({ ...next, planningId, planningName: meta.name });
     } catch (e) {
       const message = e && e.message ? e.message : "Erreur interne";

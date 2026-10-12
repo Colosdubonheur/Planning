@@ -21,6 +21,8 @@
     --repas-bd:  #A8D5B5;
     --aprem-bg:  #EFF4FF;
     --aprem-bd:  #B0C8F0;
+    --veil-bg:   #F3EFFB;
+    --veil-bd:   #C9B8E8;
     --done-clr:  #B0BDB0;
     --done-bg:   #F5F6F5;
     --done-line: #9BA89B;
@@ -235,6 +237,7 @@
   td.slot-label.sl-matin { background: #C17A14; color: white; }
   td.slot-label.sl-repas { background: #2A6749; color: white; }
   td.slot-label.sl-aprem { background: #2555A0; color: white; }
+  td.slot-label.sl-veillee { background: #5B3F96; color: white; }
 
   td.cell {
     vertical-align: top;
@@ -245,6 +248,7 @@
   tr.row-matin td.cell { background: var(--matin-bg); border-color: var(--matin-bd); }
   tr.row-repas td.cell { background: var(--repas-bg); border-color: var(--repas-bd); text-align:center; vertical-align:middle; }
   tr.row-aprem td.cell { background: var(--aprem-bg); border-color: var(--aprem-bd); }
+  tr.row-veillee td.cell { background: var(--veil-bg); border-color: var(--veil-bd); }
 
   .repas-content {
     font-size: 7.5pt;
@@ -320,6 +324,27 @@
   }
   tr.row-matin li.task .chk { border-color: #C08A2A; }
   tr.row-aprem li.task .chk { border-color: #4070B0; }
+  tr.row-veillee li.task .chk { border-color: #7A5FB5; }
+
+  /* Drag & drop (edit mode) */
+  body.edit-mode ul.tasks { min-height: 18px; }
+  .drag-ghost { opacity: 0.35; }
+  .drag-chosen { box-shadow: 0 3px 10px rgba(0,0,0,0.18); background: #fff !important; }
+
+  /* Versions */
+  .history-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #EEE; font-size: 12px; }
+  .history-row .modal-btn { margin-left: auto; padding: 4px 10px; }
+  .history-src { font-weight: 800; font-size: 10px; padding: 2px 6px; border-radius: 4px; color: white; }
+  .history-src.anima { background: #E07B2A; }
+  .history-src.netlify { background: #1B3A5C; }
+  #history-list { max-height: 30vh; overflow: auto; }
+  #history-detail h4 { margin: 12px 0 6px; font-size: 13px; }
+  .history-cells { max-height: 35vh; overflow: auto; font-size: 11px; }
+  .history-cell { margin-bottom: 6px; }
+  .history-cell ul { margin: 2px 0 0; padding-left: 16px; }
+  .sync-steps { font-size: 12.5px; line-height: 1.5; padding-left: 18px; }
+  .sync-bookmarklet { display: inline-block; padding: 8px 14px; border-radius: 8px; background: #E07B2A; color: white !important; font-weight: 800; text-decoration: none; cursor: grab; }
+  #anima-sync-code { width: 100%; font-family: monospace; font-size: 10px; height: 60px; }
   li.task.done .chk { background: var(--done-clr); border-color: var(--done-clr); }
   li.task.done .chk::after { content:'✓'; font-size:7px; color:white; line-height:1; font-weight:900; }
 
@@ -358,6 +383,7 @@
   .ld-matin { background: var(--matin-bg); border: 1.5px solid var(--matin-bd); }
   .ld-repas { background: var(--repas-bg); border: 1.5px solid var(--repas-bd); }
   .ld-aprem { background: var(--aprem-bg); border: 1.5px solid var(--aprem-bd); }
+  .ld-veillee { background: var(--veil-bg); border: 1.5px solid var(--veil-bd); }
   .ld-done  { background: var(--done-bg);  border: 1.5px solid var(--done-clr); }
   .legend-tip { margin-left:auto; color:#999; font-style:italic; font-size:6.5pt; }
 
@@ -963,6 +989,39 @@
 </div>
 
 <!-- ═══ EDIT TASK MODAL ══════════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="anima-sync-modal">
+  <div class="modal-card">
+    <h3>🔄 Synchro avec Anima</h3>
+    <div id="anima-sync-link-wrap" style="display:none">
+      <ol class="sync-steps">
+        <li><b>Ordinateur :</b> fais glisser ce bouton dans ta barre de favoris :<br>
+          <a id="anima-sync-link" class="sync-bookmarklet" href="#" onclick="event.preventDefault(); showToast('Fais-le glisser dans la barre de favoris');">🔄 Synchro</a></li>
+        <li>Sur Anima, ouvre le stage puis l'onglet <b>« Planning du stage »</b>.</li>
+        <li>Clique sur le favori : un panneau compare les deux plannings et propose <b>Anima → planning-bafa</b> ou <b>planning-bafa → Anima</b>. Une copie est enregistrée avant chaque synchro (bouton 🕘).</li>
+      </ol>
+      <p style="font-size:12px;color:#666">iPhone / iPad : crée un favori de n'importe quelle page, puis modifie son adresse et colle ce code à la place :</p>
+      <textarea id="anima-sync-code" readonly></textarea>
+      <p style="font-size:11px;color:#888">Ce favori donne accès à ce planning uniquement, pendant <span id="anima-sync-expiry"></span>. Ne le partage pas.</p>
+    </div>
+    <div class="modal-error" id="anima-sync-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="copyAnimaSyncCode()">Copier le code</button>
+      <button class="modal-btn primary" type="button" onclick="closeAnimaSyncModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="history-modal">
+  <div class="modal-card">
+    <h3>🕘 Versions enregistrées</h3>
+    <div id="history-list"></div>
+    <div id="history-detail"></div>
+    <div class="modal-actions">
+      <button class="modal-btn primary" type="button" onclick="closeHistoryModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="edit-modal">
   <div class="modal-card">
     <h3 id="edit-modal-title">Modifier la tâche</h3>
@@ -1004,6 +1063,8 @@
         <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
+        <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
+        <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
       </div>
       <div class="sync-badge" id="sync-badge">
@@ -1046,6 +1107,7 @@
     <span class="legend-item"><span class="ld ld-matin"></span> Matin</span>
     <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
     <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
+    <span class="legend-item"><span class="ld ld-veillee"></span> Veillée</span>
     <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
     <span class="legend-tip" id="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
   </div>
@@ -1054,6 +1116,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="app.js"></script>
 </body>
 </html>

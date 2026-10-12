@@ -1,6 +1,6 @@
 import { getStore } from "@netlify/blobs";
 import { updateJsonWithCAS } from "./cas.mjs";
-import { buildInitialState, buildEmptyState } from "./seed.mjs";
+import { buildInitialState, buildEmptyState, ensureSlots } from "./seed.mjs";
 import {
   addPlanningToUser,
   addPlanningToAutoAssignUsers,
@@ -246,7 +246,7 @@ export async function getPlanningState(planningId) {
     state = buildInitialState();
     await store.set(stateKey(planningId), JSON.stringify(state));
   }
-  return state;
+  return ensureSlots(state);
 }
 
 // Apply a mutator to a planning state blob using CAS.
@@ -257,7 +257,7 @@ export async function updatePlanningState(planningId, mutator) {
     stateKey(planningId),
     (current) => {
       let state = isValidState(current) ? current : buildInitialState();
-      return mutator(state);
+      return mutator(ensureSlots(state));
     },
     { fallback: () => buildInitialState() }
   );

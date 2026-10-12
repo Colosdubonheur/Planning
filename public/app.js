@@ -239,6 +239,8 @@ function applyUserUI() {
   $('btn-reset').style.display = owner ? '' : 'none';
   $('btn-rename-planning').style.display = owner ? '' : 'none';
   $('btn-delete-planning').style.display = owner ? '' : 'none';
+  $('btn-anima-sync').style.display = owner ? '' : 'none';
+  $('btn-history').style.display = owner ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -248,6 +250,7 @@ function toggleEditMode() {
   editMode = !editMode;
   document.body.classList.toggle('edit-mode', editMode);
   $('btn-edit-mode').classList.toggle('active', editMode);
+  initDragAndDrop();
   applyUserUI();
   renderPlanning();
   setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
@@ -338,6 +341,8 @@ function renderPlanningSelector() {
   const canOwn = current && currentUser && current.ownerId === currentUser.user;
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
+  $('btn-anima-sync').style.display = canOwn ? '' : 'none';
+  $('btn-history').style.display = canOwn ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -728,6 +733,52 @@ function renderPlanning() {
 
   updateProgress();
   lastVersion = currentState.version || 0;
+  initDragAndDrop();
+}
+
+// ── DRAG & DROP (edit mode) ────────────────────────────────────
+// Uses SortableJS (loaded from cdnjs in index.html) because native HTML5
+// drag & drop does not work with touch on iPhone.  Active only in edit
+// mode so a simple tap still ticks a task.  On touch devices a short press
+// (200 ms) starts the drag, so scrolling the table keeps working.
+let sortables = [];
+let isDragging = false;
+
+function initDragAndDrop() {
+  for (const s of sortables) { try { s.destroy(); } catch {} }
+  sortables = [];
+  if (typeof Sortable === 'undefined') return;
+  if (!editMode || !canEditContent()) return;
+  document.querySelectorAll('#planning-table td.cell ul.tasks').forEach((ul) => {
+    sortables.push(Sortable.create(ul, {
+      group: 'tasks',
+      animation: 150,
+      delay: 200,
+      delayOnTouchOnly: true,
+      ghostClass: 'drag-ghost',
+      chosenClass: 'drag-chosen',
+      onStart() { isDragging = true; closeTaskMenu(); },
+      async onEnd(evt) {
+        isDragging = false;
+        const taskId = evt.item && evt.item.dataset.taskId;
+        const cell = evt.to && evt.to.closest('td.cell');
+        if (!taskId || !cell) return;
+        if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
+        try {
+          await pushOp({
+            op: 'move',
+            taskId,
+            dayId: cell.dataset.day,
+            slotId: cell.dataset.slot,
+            index: evt.newIndex,
+          });
+        } catch (err) {
+          showToast(err.message || 'Déplacement impossible');
+          renderPlanning();
+        }
+      },
+    }));
+  });
 }
 
 // ── EVENT DELEGATION ───────────────────────────────────────────
@@ -1336,7 +1387,7 @@ async function fetchState() {
 }
 
 async function poll() {
-  if (isSyncing) return;
+  if (isSyncing || isDragging) return;
   if (!currentPlanningId) return;
   try {
     const state = await apiFetch(withPlanning(API_STATE));
@@ -1525,3 +1576,173 @@ window.closePlanningSettingsModal = closePlanningSettingsModal;
 window.submitPlanningSettings = submitPlanningSettings;
 
 window.addEventListener('DOMContentLoaded', init);
+
+// ── SYNCHRO ANIMA ──────────────────────────────────────────────
+// Generates a bookmarklet bound to the current planning.  The bookmarklet
+// runs on plateforme.anima-lorraine.fr and loads /anima-sync.js, which
+// compares both plannings and pushes in the direction chosen by the user.
+async function openAnimaSyncModal() {
+  if (!currentPlanningId) return;
+  $('anima-sync-error').textContent = '';
+  $('anima-sync-link-wrap').style.display = 'none';
+  $('anima-sync-modal').classList.remove('hidden');
+  try {
+    const data = await apiFetch('/api/auth/sync-token', {
+      method: 'POST',
+      body: JSON.stringify({ planningId: currentPlanningId }),
+    });
+    const cfg = { api: window.location.origin, planningId: currentPlanningId, token: data.token };
+    const code = 'javascript:(function(){window.__PLANNING_BAFA=' + JSON.stringify(cfg)
+      + ';var s=document.createElement("script");s.charset="utf-8";s.src=' + JSON.stringify(window.location.origin + '/anima-sync.js?v=')
+      + '+Date.now();document.body.appendChild(s);})();';
+    const a = $('anima-sync-link');
+    a.setAttribute('href', code);
+    const current = planningsList.find((p) => p.id === currentPlanningId);
+    a.textContent = '🔄 Synchro ' + (current ? current.name : 'planning');
+    $('anima-sync-code').value = code;
+    $('anima-sync-expiry').textContent = data.expiresInDays + ' jours';
+    $('anima-sync-link-wrap').style.display = '';
+  } catch (e) {
+    $('anima-sync-error').textContent = e.message || 'Erreur';
+  }
+}
+
+function closeAnimaSyncModal() { $('anima-sync-modal').classList.add('hidden'); }
+
+async function copyAnimaSyncCode() {
+  const ta = $('anima-sync-code');
+  try { await navigator.clipboard.writeText(ta.value); showToast('Code du favori copié'); }
+  catch { ta.select(); document.execCommand('copy'); showToast('Code du favori copié'); }
+}
+
+// ── HISTORIQUE DES VERSIONS ────────────────────────────────────
+const SLOT_LABELS = { matin: 'Matin', aprem: 'Après-midi', apm: 'Après-midi', veillee: 'Veillée' };
+
+async function openHistoryModal() {
+  if (!currentPlanningId) return;
+  $('history-modal').classList.remove('hidden');
+  $('history-detail').innerHTML = '';
+  const list = $('history-list');
+  list.innerHTML = '<em>Chargement…</em>';
+  try {
+    const { versions } = await apiFetch('/api/history?planning=' + encodeURIComponent(currentPlanningId));
+    if (!versions.length) {
+      list.innerHTML = '<em>Aucune version enregistrée pour l\'instant. Une copie est faite automatiquement à chaque synchro avec Anima et avant chaque restauration.</em>';
+      return;
+    }
+    list.innerHTML = versions.map((v) => `<div class="history-row">
+        <span class="history-src ${v.source}">${v.source === 'anima' ? 'Anima' : 'planning-bafa'}</span>
+        <span class="history-date">${escapeHtml(new Date(v.at).toLocaleString('fr-FR'))}</span>
+        <button type="button" class="modal-btn ghost" onclick="showHistoryVersion('${escapeHtml(v.id)}')">Voir</button>
+      </div>`).join('');
+  } catch (e) {
+    list.innerHTML = '<span class="modal-error">' + escapeHtml(e.message || 'Erreur') + '</span>';
+  }
+}
+
+function closeHistoryModal() { $('history-modal').classList.add('hidden'); }
+
+let historyCurrent = null;
+
+// Turn either kind of snapshot into [{ day, slot, items: [text] }].
+function snapshotCells(snap) {
+  const cells = [];
+  if (snap.source === 'anima') {
+    const { jours = {}, titles = {} } = snap.data || {};
+    for (const [key, arr] of Object.entries(jours)) {
+      const m = /^(j\d+)_(matin|apm|veillee)$/.exec(key);
+      if (!m || !Array.isArray(arr) || !arr.length) continue;
+      cells.push({
+        day: m[1], slot: m[2],
+        items: arr.map((e) => {
+          const id = typeof e === 'string' ? e : e && e.id;
+          return titles[id] || id;
+        }),
+      });
+    }
+  } else {
+    const tasks = (snap.data && snap.data.tasks) || [];
+    const map = {};
+    for (const t of tasks.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
+      const k = t.dayId + '|' + t.slotId;
+      (map[k] = map[k] || { day: t.dayId, slot: t.slotId, items: [] }).items.push(t.text);
+    }
+    cells.push(...Object.values(map));
+  }
+  const n = (d) => parseInt(String(d).slice(1), 10) || 0;
+  const o = (s) => ['matin', 'aprem', 'apm', 'veillee'].indexOf(s);
+  return cells.sort((a, b) => n(a.day) - n(b.day) || o(a.slot) - o(b.slot));
+}
+
+async function showHistoryVersion(id) {
+  const box = $('history-detail');
+  box.innerHTML = '<em>Chargement…</em>';
+  try {
+    const { snapshot } = await apiFetch('/api/history?planning=' + encodeURIComponent(currentPlanningId) + '&id=' + encodeURIComponent(id));
+    historyCurrent = snapshot;
+    const cells = snapshotCells(snapshot);
+    const title = (snapshot.source === 'anima' ? 'Copie Anima' : 'Copie planning-bafa')
+      + ' du ' + new Date(snapshot.at).toLocaleString('fr-FR')
+      + (snapshot.label ? ' (' + snapshot.label + ')' : '');
+    let html = `<h4>${escapeHtml(title)}</h4><div class="history-cells">`;
+    for (const c of cells) {
+      html += `<div class="history-cell"><b>${escapeHtml(c.day.toUpperCase())} · ${escapeHtml(SLOT_LABELS[c.slot] || c.slot)}</b><ul>`
+        + c.items.map((t) => `<li>${escapeHtml(t)}</li>`).join('') + '</ul></div>';
+    }
+    html += '</div><div class="modal-actions">'
+      + '<button type="button" class="modal-btn ghost" onclick="downloadHistoryVersion()">⬇ Télécharger</button>'
+      + '<button type="button" class="modal-btn primary" onclick="restoreHistoryVersion()">↺ Restaurer dans planning-bafa</button>'
+      + '</div><div class="modal-error" id="history-error"></div>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '<span class="modal-error">' + escapeHtml(e.message || 'Erreur') + '</span>';
+  }
+}
+
+function downloadHistoryVersion() {
+  if (!historyCurrent) return;
+  const blob = new Blob([JSON.stringify(historyCurrent, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `planning-${currentPlanningId}-${historyCurrent.source}-${historyCurrent.id}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+// Restore a version into planning-bafa (the current content is saved as a
+// new version first, server side).  An Anima copy can be pushed back to
+// Anima afterwards with the bookmarklet ("planning-bafa → Anima").
+async function restoreHistoryVersion() {
+  if (!historyCurrent || !currentState) return;
+  const dayIds = new Set(currentState.days.map((d) => d.id));
+  const tasks = [];
+  if (historyCurrent.source === 'anima') {
+    const { jours = {}, titles = {} } = historyCurrent.data || {};
+    for (const [key, arr] of Object.entries(jours)) {
+      const m = /^(j\d+)_(matin|apm|veillee)$/.exec(key);
+      if (!m || !dayIds.has(m[1]) || !Array.isArray(arr)) continue;
+      const slotId = m[2] === 'apm' ? 'aprem' : m[2];
+      for (const e of arr) {
+        const id = typeof e === 'string' ? e : e && e.id;
+        if (!id) continue;
+        tasks.push({ dayId: m[1], slotId, text: String(titles[id] || id).slice(0, 300), animaId: id });
+      }
+    }
+  } else {
+    const snapTasks = ((historyCurrent.data && historyCurrent.data.tasks) || [])
+      .slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    for (const t of snapTasks) {
+      if (!dayIds.has(t.dayId)) continue;
+      tasks.push({ dayId: t.dayId, slotId: t.slotId, text: t.text, ...(t.animaId ? { animaId: t.animaId } : {}) });
+    }
+  }
+  try {
+    await pushOp({ op: 'replaceAll', tasks, reason: 'Avant restauration d\'une version' });
+    showToast('Version restaurée');
+    closeHistoryModal();
+  } catch (e) {
+    const err = $('history-error');
+    if (err) err.textContent = e.message || 'Erreur';
+  }
+}
