@@ -352,6 +352,15 @@
   #det-fiche { white-space: pre-wrap; font-size: 11px; color: #445; background: #F7F9FC; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow: auto; }
   @media (max-width: 600px) { .details-grid { grid-template-columns: 1fr; } }
 
+  /* Invitations */
+  .invite-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+  .invite-row input { width: 100%; font-size: 11px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; }
+  .invite-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .invite-actions .modal-btn { padding: 6px 10px; text-decoration: none; font-size: 12px; }
+  .modal-btn.whatsapp { background: #25D366; color: white; }
+  .invite-meta, .invite-empty { font-size: 11px; color: #778; margin-top: 4px; }
+  .invite-joined { font-size: 12px; margin-top: 8px; }
+
   /* Versions */
   .history-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #EEE; font-size: 12px; }
   .history-row .modal-btn { margin-left: auto; padding: 4px 10px; }
@@ -1010,6 +1019,47 @@
 </div>
 
 <!-- ═══ EDIT TASK MODAL ══════════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="invite-modal">
+  <div class="modal-card">
+    <h3>📨 Inviter l'équipe</h3>
+    <p style="font-size:12px;color:#556;margin:0 0 10px">Envoie ce lien (WhatsApp, mail…). Chaque personne choisit son identifiant et son mot de passe et peut ensuite modifier ce planning et remplir les fiches (rôle formateur). Lien valable 14 jours, pour plusieurs personnes.</p>
+    <div id="invite-list"></div>
+    <div class="modal-error" id="invite-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="createInviteLink()">Nouveau lien</button>
+      <button class="modal-btn primary" type="button" onclick="closeInviteModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="join-modal">
+  <div class="modal-card">
+    <h3 id="join-title">Invitation</h3>
+    <p id="join-intro" style="font-size:13px;color:#445"></p>
+    <form id="join-form" style="display:none" onsubmit="submitJoin(event)">
+      <div class="modal-field">
+        <label for="join-user">Choisis un identifiant</label>
+        <input id="join-user" autocomplete="username" placeholder="ex. Elena" required>
+      </div>
+      <div class="modal-field">
+        <label for="join-password">Mot de passe (6 caractères minimum)</label>
+        <input id="join-password" type="password" autocomplete="new-password" required minlength="6">
+      </div>
+      <div class="modal-field">
+        <label for="join-password2">Confirme le mot de passe</label>
+        <input id="join-password2" type="password" autocomplete="new-password" required minlength="6">
+      </div>
+      <p style="font-size:11px;color:#889">Tu as déjà un compte ? Mets ton identifiant et ton mot de passe habituels.</p>
+    </form>
+    <div id="join-logged" style="display:none;font-size:13px">Tu es connecté(e) en tant que <b id="join-logged-name"></b>.</div>
+    <div class="modal-error" id="join-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeJoinModal()">Plus tard</button>
+      <button class="modal-btn primary" type="button" id="join-submit" onclick="submitJoin()">Rejoindre</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="details-modal">
   <div class="modal-card">
     <h3 id="details-title">Fiche du module</h3>
@@ -1141,6 +1191,7 @@
         <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
+        <button type="button" id="btn-invite" title="Inviter l'équipe (lien)" onclick="openInviteModal()">📨</button>
         <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
         <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>

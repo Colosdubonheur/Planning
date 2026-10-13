@@ -240,6 +240,7 @@ function applyUserUI() {
   $('btn-rename-planning').style.display = owner ? '' : 'none';
   $('btn-delete-planning').style.display = owner ? '' : 'none';
   $('btn-anima-sync').style.display = owner ? '' : 'none';
+  $('btn-invite').style.display = owner ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
 
   refreshEmptyState();
@@ -342,6 +343,7 @@ function renderPlanningSelector() {
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
+  $('btn-invite').style.display = canOwn ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
 
   refreshEmptyState();
@@ -1558,6 +1560,8 @@ async function init() {
   } else {
     await startPublic();
   }
+  const inviteId = new URLSearchParams(window.location.search).get('invite');
+  if (inviteId) openJoinModal(inviteId);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -1899,6 +1903,162 @@ async function saveDetails() {
     closeDetailsModal();
   } catch (e) {
     $('details-error').textContent = e.message || 'Erreur';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+
+// ── INVITATIONS ────────────────────────────────────────────────
+// The owner creates a link (valid 14 days, usable by several people) and
+// sends it, e.g. on WhatsApp.  Whoever opens it picks an identifiant and a
+// password (or joins with their existing account) and gets formateur access
+// to the planning.
+function inviteUrl(id) {
+  return window.location.origin + '/?invite=' + encodeURIComponent(id);
+}
+
+async function openInviteModal() {
+  if (!currentPlanningId) return;
+  $('invite-error').textContent = '';
+  $('invite-modal').classList.remove('hidden');
+  await refreshInviteList();
+}
+
+function closeInviteModal() { $('invite-modal').classList.add('hidden'); }
+
+async function refreshInviteList() {
+  const box = $('invite-list');
+  box.innerHTML = '<em>Chargement…</em>';
+  try {
+    const { invites } = await apiFetch('/api/invites?planning=' + encodeURIComponent(currentPlanningId));
+    const active = invites.filter((i) => i.status === 'valide');
+    const joined = invites.flatMap((i) => i.uses || []);
+    let html = '';
+    if (!active.length) {
+      html += '<p class="invite-empty">Aucun lien actif. Crée un lien puis envoie-le à ton équipe.</p>';
+    }
+    for (const inv of active) {
+      const url = inviteUrl(inv.id);
+      html += `<div class="invite-row">
+        <input readonly value="${escapeHtml(url)}" onclick="this.select()">
+        <div class="invite-actions">
+          <button type="button" class="modal-btn ghost" onclick="copyText('${escapeHtml(url)}')">Copier</button>
+          <a class="modal-btn whatsapp" target="_blank" rel="noopener" href="${escapeHtml(whatsappLink(url))}">WhatsApp</a>
+          <button type="button" class="modal-btn ghost" onclick="revokeInvite('${escapeHtml(inv.id)}')">Désactiver</button>
+        </div>
+        <div class="invite-meta">Valable jusqu'au ${escapeHtml(new Date(inv.expiresAt).toLocaleDateString('fr-FR'))}</div>
+      </div>`;
+    }
+    if (joined.length) {
+      html += '<div class="invite-joined"><b>Ont rejoint :</b> ' + joined
+        .map((u) => escapeHtml(u.user) + (u.created ? ' (nouveau compte)' : '')).join(', ') + '</div>';
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '';
+    $('invite-error').textContent = e.message || 'Erreur';
+  }
+}
+
+function whatsappLink(url) {
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  const name = current ? current.name : 'le planning';
+  const text = `Rejoins le planning « ${name} » pour qu'on prépare les temps ensemble : ${url}`;
+  return 'https://wa.me/?text=' + encodeURIComponent(text);
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); showToast('Lien copié'); }
+  catch { showToast('Copie impossible, sélectionne le lien'); }
+}
+
+async function createInviteLink() {
+  $('invite-error').textContent = '';
+  try {
+    await apiFetch('/api/invites', { method: 'POST', body: JSON.stringify({ planningId: currentPlanningId }) });
+    await refreshInviteList();
+  } catch (e) {
+    $('invite-error').textContent = e.message || 'Erreur';
+  }
+}
+
+async function revokeInvite(id) {
+  try {
+    await apiFetch('/api/invites?id=' + encodeURIComponent(id), { method: 'DELETE' });
+    await refreshInviteList();
+  } catch (e) {
+    $('invite-error').textContent = e.message || 'Erreur';
+  }
+}
+
+// Landing for someone who opened an invitation link.
+let joinInviteId = null;
+
+async function openJoinModal(id) {
+  joinInviteId = id;
+  $('join-error').textContent = '';
+  $('join-modal').classList.remove('hidden');
+  $('join-form').style.display = 'none';
+  $('join-logged').style.display = 'none';
+  $('join-title').textContent = 'Invitation';
+  $('join-submit').style.display = 'none';
+  try {
+    const info = await apiFetch('/api/invites?id=' + encodeURIComponent(id));
+    if (info.status !== 'valide') {
+      $('join-intro').textContent = info.status === 'expire'
+        ? "Ce lien d'invitation a expiré. Demande un nouveau lien."
+        : "Ce lien d'invitation n'est plus valide. Demande un nouveau lien.";
+      return;
+    }
+    $('join-title').textContent = info.planningName || 'Planning';
+    $('join-intro').textContent = `${info.invitedBy} t'invite à préparer ce planning avec l'équipe.`;
+    $('join-submit').style.display = '';
+    if (currentUser) {
+      $('join-logged-name').textContent = currentUser.user;
+      $('join-logged').style.display = '';
+    } else {
+      $('join-form').style.display = '';
+      setTimeout(() => $('join-user').focus(), 50);
+    }
+  } catch (e) {
+    $('join-intro').textContent = "Ce lien d'invitation n'est pas valide.";
+  }
+}
+
+function closeJoinModal() {
+  $('join-modal').classList.add('hidden');
+  const url = new URL(window.location.href);
+  url.searchParams.delete('invite');
+  history.replaceState(null, '', url.toString());
+}
+
+async function submitJoin(e) {
+  if (e) e.preventDefault();
+  const btn = $('join-submit');
+  const body = { id: joinInviteId };
+  if (!currentUser) {
+    body.user = $('join-user').value.trim();
+    body.password = $('join-password').value;
+    if ($('join-password2').value !== body.password) {
+      $('join-error').textContent = 'Les deux mots de passe sont différents';
+      return;
+    }
+  }
+  btn.disabled = true;
+  $('join-error').textContent = '';
+  try {
+    const res = await apiFetch('/api/invites/accept', { method: 'POST', body: JSON.stringify(body) });
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    url.searchParams.set('planning', res.planningId);
+    history.replaceState(null, '', url.toString());
+    $('join-modal').classList.add('hidden');
+    await loadMe();
+    await startAuthenticated();
+    showToast(res.created ? 'Compte créé, bienvenue !' : 'Planning ajouté à ton compte');
+  } catch (err) {
+    $('join-error').textContent = err.message || 'Erreur';
   } finally {
     btn.disabled = false;
   }
