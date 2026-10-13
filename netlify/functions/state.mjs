@@ -33,6 +33,68 @@ function cleanText(raw) {
   return text;
 }
 
+// ── Task details ("fiche" of a module) ─────────────────────────
+// Prepared collaboratively by the team.  Only `resume` (text meant for the
+// trainees) is visible on the public share link; everything else is
+// team-only and stripped from anonymous reads.
+const DETAIL_TEXT_FIELDS = {
+  resume: 2000,     // pour les stagiaires (public)
+  duree: 60,
+  objectifs: 4000,
+  deroule: 8000,
+  materiel: 4000,
+  notes: 4000,      // notes internes de l'équipe
+  ficheAnima: 6000, // sommaire de la fiche Anima (renseigné par la synchro)
+};
+const DETAIL_STATUS = new Set(["", "a_preparer", "en_cours", "pret"]);
+const PUBLIC_DETAIL_FIELDS = new Set(["resume", "duree", "formateurs"]);
+
+function cleanDetailsPatch(raw) {
+  if (!raw || typeof raw !== "object") throw new Error("Détails manquants");
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (k in DETAIL_TEXT_FIELDS) {
+      if (typeof v !== "string") throw new Error(`Champ ${k} invalide`);
+      if (v.length > DETAIL_TEXT_FIELDS[k]) throw new Error(`Champ ${k} trop long`);
+      out[k] = v.replace(/\r\n/g, "\n");
+    } else if (k === "statut") {
+      if (!DETAIL_STATUS.has(v)) throw new Error("Statut invalide");
+      out.statut = v;
+    } else if (k === "formateurs") {
+      if (!Array.isArray(v) || v.length > 10) throw new Error("Formateurs invalides");
+      out.formateurs = v.map((x) => String(x).trim().slice(0, 60)).filter(Boolean);
+    } else {
+      throw new Error(`Champ inconnu: ${k}`);
+    }
+  }
+  return out;
+}
+
+function applyDetailsPatch(task, patch, actorUser) {
+  const details = { ...(task.details || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    const empty = v === "" || (Array.isArray(v) && !v.length);
+    if (empty) delete details[k]; else details[k] = v;
+  }
+  details.updatedBy = actorUser;
+  details.updatedAt = Date.now();
+  task.details = details;
+}
+
+// Anonymous viewers (share link) only see the public part of the details.
+export function publicView(state) {
+  return {
+    ...state,
+    tasks: (state.tasks || []).map((t) => {
+      if (!t.details) return t;
+      const d = {};
+      for (const k of PUBLIC_DETAIL_FIELDS) if (t.details[k] !== undefined) d[k] = t.details[k];
+      const { details, ...rest } = t;
+      return Object.keys(d).length ? { ...rest, details: d } : rest;
+    }),
+  };
+}
+
 function cleanAnimaId(raw) {
   if (raw === undefined || raw === null || raw === "") return undefined;
   if (typeof raw !== "string" || raw.length > MAX_ANIMA_ID) throw new Error("animaId invalide");
@@ -70,6 +132,13 @@ function applyOp(state, op, actor) {
       const task = state.tasks.find((t) => t.id === op.taskId);
       if (!task) throw new Error("Tâche introuvable");
       task.done = !!op.done;
+      break;
+    }
+
+    case "setDetails": {
+      const task = state.tasks.find((t) => t.id === op.taskId);
+      if (!task) throw new Error("Tâche introuvable");
+      applyDetailsPatch(task, cleanDetailsPatch(op.details), actor.user);
       break;
     }
 
@@ -188,6 +257,13 @@ function applyOp(state, op, actor) {
           done: prev ? !!prev.done : false,
         };
         if (animaId) task.animaId = animaId;
+        if (prev && prev.details) task.details = prev.details;
+        if (typeof raw.ficheAnima === "string" && raw.ficheAnima.trim()) {
+          const fiche = raw.ficheAnima.slice(0, DETAIL_TEXT_FIELDS.ficheAnima);
+          if (!task.details || task.details.ficheAnima !== fiche) {
+            task.details = { ...(task.details || {}), ficheAnima: fiche };
+          }
+        }
         next.push(task);
       }
       state.tasks = next;
@@ -265,7 +341,15 @@ export default async (req) => {
       const meta = await getPlanningMeta(planningId);
       if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
       const state = await getPlanningState(planningId);
-      return json({ ...state, planningId, planningName: meta.name });
+      // Team members (cookie session or this planning's sync token) see the
+      // full details; the public share link only sees the public part.
+      let full = false;
+      const auth = requireAuth(req, { allowSync: true });
+      if (!auth.error) {
+        const a = auth.user;
+        full = a.scope === "sync" ? a.planningId === planningId : await userHasAccess(a.user, planningId);
+      }
+      return json({ ...(full ? state : publicView(state)), planningId, planningName: meta.name, fullAccess: full });
     } catch (e) {
       return json({ error: "Erreur de lecture: " + (e.message || e) }, { status: 500 });
     }

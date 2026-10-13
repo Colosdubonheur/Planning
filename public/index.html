@@ -331,6 +331,27 @@
   .drag-ghost { opacity: 0.35; }
   .drag-chosen { box-shadow: 0 3px 10px rgba(0,0,0,0.18); background: #fff !important; }
 
+  /* Fiche du module */
+  li.task .task-info {
+    border: 0; background: transparent; color: #8899AA; font-size: 12px; font-weight: 900;
+    padding: 0 3px; margin-left: 2px; cursor: pointer; line-height: 1; align-self: center;
+  }
+  li.task .task-info:hover { color: var(--navy); }
+  .task-badges { display: inline-flex; gap: 3px; align-items: center; margin-left: 4px; vertical-align: middle; }
+  .badge-status { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .badge-status.st-a_preparer { background: #D33; }
+  .badge-status.st-en_cours { background: #E0A12A; }
+  .badge-status.st-pret { background: #2A9D5B; }
+  .badge-who, .badge-dur { font-size: 6.3pt; background: rgba(27,58,92,0.08); color: #3A4B5C; border-radius: 3px; padding: 0 3px; }
+  #details-modal .modal-card { max-width: 640px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
+  #details-modal textarea { min-height: 60px; resize: vertical; }
+  #details-modal textarea#det-deroule { min-height: 120px; }
+  .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+  .details-where { color: #667; font-size: 12px; margin: -6px 0 10px; }
+  .details-meta { color: #889; font-size: 11px; margin-top: 4px; }
+  #det-fiche { white-space: pre-wrap; font-size: 11px; color: #445; background: #F7F9FC; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow: auto; }
+  @media (max-width: 600px) { .details-grid { grid-template-columns: 1fr; } }
+
   /* Versions */
   .history-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #EEE; font-size: 12px; }
   .history-row .modal-btn { margin-left: auto; padding: 4px 10px; }
@@ -989,6 +1010,63 @@
 </div>
 
 <!-- ═══ EDIT TASK MODAL ══════════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="details-modal">
+  <div class="modal-card">
+    <h3 id="details-title">Fiche du module</h3>
+    <div class="details-where" id="details-where"></div>
+    <div class="details-grid">
+      <div class="modal-field team-only">
+        <label for="det-formateurs">Formateur(s)</label>
+        <input id="det-formateurs" list="det-formateurs-list" placeholder="ex. Elena, Claire" autocomplete="off">
+        <datalist id="det-formateurs-list"></datalist>
+      </div>
+      <div class="modal-field team-only">
+        <label for="det-statut">Préparation</label>
+        <select id="det-statut">
+          <option value="">Non renseigné</option>
+          <option value="a_preparer">À préparer</option>
+          <option value="en_cours">En cours</option>
+          <option value="pret">Prêt</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="det-duree">Durée</label>
+        <input id="det-duree" placeholder="ex. 1h30">
+      </div>
+    </div>
+    <div class="modal-field">
+      <label for="det-resume">Pour les stagiaires (visible sur le lien de partage)</label>
+      <textarea id="det-resume" placeholder="Ce que les stagiaires vont faire / retenir"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-objectifs">Objectifs</label>
+      <textarea id="det-objectifs"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-deroule">Déroulé</label>
+      <textarea id="det-deroule" placeholder="Accroche, apports, mise en pratique, bilan…"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-materiel">Matériel</label>
+      <textarea id="det-materiel"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-notes">Notes de l'équipe</label>
+      <textarea id="det-notes"></textarea>
+    </div>
+    <div class="modal-field" id="det-fiche-wrap">
+      <label>Fiche Anima</label>
+      <div id="det-fiche"></div>
+    </div>
+    <div class="details-meta" id="details-meta"></div>
+    <div class="modal-error" id="details-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeDetailsModal()">Fermer</button>
+      <button class="modal-btn primary" type="button" id="details-save" onclick="saveDetails()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="anima-sync-modal">
   <div class="modal-card">
     <h3>🔄 Synchro avec Anima</h3>

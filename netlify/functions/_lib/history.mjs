@@ -75,6 +75,7 @@ export function netlifySnapshotData(state) {
       text: t.text,
       done: !!t.done,
       ...(t.animaId ? { animaId: t.animaId } : {}),
+      ...(t.details ? { details: t.details } : {}),
     })),
   };
 }

@@ -716,7 +716,8 @@ function renderPlanning() {
           const doneCls = t.done ? ' done' : '';
           html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
             <span class="chk"></span>
-            <span class="task-text">${escapeHtml(t.text)}</span>
+            <span class="task-text">${escapeHtml(t.text)}${taskBadges(t)}</span>
+            ${showDetailsButton(t) ? `<button type="button" class="task-info" data-action="details" title="Fiche du module" aria-label="Fiche du module">›</button>` : ''}
           </li>`;
         }
         html += '</ul>';
@@ -734,6 +735,7 @@ function renderPlanning() {
   updateProgress();
   lastVersion = currentState.version || 0;
   initDragAndDrop();
+  refreshDetailsModal();
 }
 
 // ── DRAG & DROP (edit mode) ────────────────────────────────────
@@ -783,6 +785,13 @@ function initDragAndDrop() {
 
 // ── EVENT DELEGATION ───────────────────────────────────────────
 function onTableClick(e) {
+  const infoBtn = e.target.closest('[data-action="details"]');
+  if (infoBtn) {
+    e.stopPropagation();
+    const li = infoBtn.closest('li.task');
+    if (li) openDetailsModal(li.dataset.taskId);
+    return;
+  }
   const addBtn = e.target.closest('[data-action="add"]');
   if (addBtn) {
     e.stopPropagation();
@@ -875,7 +884,8 @@ function openTaskMenu(taskId, anchor) {
 
   const menu = document.createElement('div');
   menu.className = 'task-menu';
-  let html = '<button type="button" data-menu-action="rename">✎ Renommer</button>';
+  let html = '<button type="button" data-menu-action="details">📋 Fiche du module</button>';
+  html += '<button type="button" data-menu-action="rename">✎ Renommer</button>';
   if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
   if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
   html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
@@ -897,7 +907,8 @@ function openTaskMenu(taskId, anchor) {
     closeTaskMenu();
     const t = currentState.tasks.find((x) => x.id === taskId);
     if (!t) return;
-    if (action === 'rename') openEditModal(t);
+    if (action === 'details') openDetailsModal(t.id);
+    else if (action === 'rename') openEditModal(t);
     else if (action === 'move') openMoveModal(t);
     else if (action === 'remove') confirmRemove(t);
     else if (action === 'up' || action === 'down') {
@@ -1744,5 +1755,151 @@ async function restoreHistoryVersion() {
   } catch (e) {
     const err = $('history-error');
     if (err) err.textContent = e.message || 'Erreur';
+  }
+}
+
+
+// ── FICHE DU MODULE (détails collaboratifs) ────────────────────
+// Each module can carry a "fiche" prepared by the team: formateurs, durée,
+// objectifs, déroulé, matériel, notes internes, statut de préparation and a
+// short text for the trainees (the only part shown on the public link).
+// Saving sends only the fields changed in this modal, so two people editing
+// different fields of the same module never overwrite each other; a field
+// changed remotely while open is refreshed unless you are editing it.
+const DETAIL_FIELDS = ['resume', 'duree', 'objectifs', 'deroule', 'materiel', 'notes'];
+const STATUS_LABELS = { a_preparer: 'À préparer', en_cours: 'En cours', pret: 'Prêt' };
+let detailsTaskId = null;
+let detailsBase = null; // values when the modal was opened / last synced
+
+function taskBadges(t) {
+  const d = t.details;
+  if (!d) return '';
+  let out = '';
+  if (d.statut) out += `<span class="badge-status st-${escapeHtml(d.statut)}" title="${escapeHtml(STATUS_LABELS[d.statut] || '')}"></span>`;
+  if (Array.isArray(d.formateurs) && d.formateurs.length) {
+    out += `<span class="badge-who">${escapeHtml(d.formateurs.map((n) => n.split(/\s+/)[0]).join(', '))}</span>`;
+  }
+  if (d.duree) out += `<span class="badge-dur">${escapeHtml(d.duree)}</span>`;
+  return out ? `<span class="task-badges">${out}</span>` : '';
+}
+
+function showDetailsButton(t) {
+  if (canEditContent()) return true;
+  return !!(t.details && (t.details.resume || t.details.duree));
+}
+
+function detailsValues(t) {
+  const d = (t && t.details) || {};
+  const v = { statut: d.statut || '', formateurs: (d.formateurs || []).join(', ') };
+  for (const f of DETAIL_FIELDS) v[f] = d[f] || '';
+  return v;
+}
+
+function knownFormateurs() {
+  const set = new Set();
+  for (const t of (currentState && currentState.tasks) || []) {
+    for (const n of (t.details && t.details.formateurs) || []) set.add(n);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+}
+
+function openDetailsModal(taskId) {
+  const t = currentState && currentState.tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  closeTaskMenu();
+  detailsTaskId = taskId;
+  detailsBase = detailsValues(t);
+  const editable = canEditContent();
+  const day = currentState.days.find((d) => d.id === t.dayId);
+  const slot = currentState.slots.find((x) => x.id === t.slotId);
+  $('details-title').textContent = t.text;
+  $('details-where').textContent = [day && `${day.short} ${day.name} ${day.date}`, slot && slot.label].filter(Boolean).join(' · ');
+  for (const f of DETAIL_FIELDS) {
+    const el = $('det-' + f);
+    el.value = detailsBase[f];
+    el.readOnly = !editable;
+  }
+  $('det-formateurs').value = detailsBase.formateurs;
+  $('det-formateurs').readOnly = !editable;
+  $('det-statut').value = detailsBase.statut;
+  $('det-statut').disabled = !editable;
+  $('det-formateurs-list').innerHTML = knownFormateurs().map((n) => `<option value="${escapeHtml(n)}">`).join('');
+  // Team-only sections are hidden for anonymous viewers (the server does
+  // not send them anyway).
+  document.querySelectorAll('#details-modal .team-only').forEach((el) => { el.style.display = editable ? '' : 'none'; });
+  const fiche = (t.details && t.details.ficheAnima) || '';
+  $('det-fiche-wrap').style.display = editable && fiche ? '' : 'none';
+  $('det-fiche').textContent = fiche;
+  $('details-save').style.display = editable ? '' : 'none';
+  $('details-error').textContent = '';
+  updateDetailsMeta(t);
+  $('details-modal').classList.remove('hidden');
+}
+
+function updateDetailsMeta(t) {
+  const d = t.details || {};
+  $('details-meta').textContent = d.updatedBy
+    ? `Dernière modification : ${d.updatedBy}, ${new Date(d.updatedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`
+    : '';
+}
+
+function closeDetailsModal() {
+  $('details-modal').classList.add('hidden');
+  detailsTaskId = null;
+  detailsBase = null;
+}
+
+function readDetailsForm() {
+  const v = { statut: $('det-statut').value, formateurs: $('det-formateurs').value };
+  for (const f of DETAIL_FIELDS) v[f] = $('det-' + f).value;
+  return v;
+}
+
+// Called after every render: merge remote changes into the open modal.
+function refreshDetailsModal() {
+  if (!detailsTaskId || $('details-modal').classList.contains('hidden')) return;
+  const t = currentState && currentState.tasks.find((x) => x.id === detailsTaskId);
+  if (!t) { closeDetailsModal(); showToast('Ce module a été supprimé'); return; }
+  const remote = detailsValues(t);
+  const local = readDetailsForm();
+  const changedRemotely = [];
+  for (const k of Object.keys(remote)) {
+    if (remote[k] === detailsBase[k]) continue;
+    // Not touched locally: take the remote value.
+    if (local[k] === detailsBase[k]) {
+      const el = k === 'statut' ? $('det-statut') : k === 'formateurs' ? $('det-formateurs') : $('det-' + k);
+      el.value = remote[k];
+      changedRemotely.push(k);
+    }
+    detailsBase[k] = remote[k];
+  }
+  $('details-title').textContent = t.text;
+  updateDetailsMeta(t);
+  if (changedRemotely.length && t.details && t.details.updatedBy !== (currentUser && currentUser.user)) {
+    showToast(`Fiche mise à jour par ${t.details.updatedBy}`);
+  }
+}
+
+async function saveDetails() {
+  if (!detailsTaskId) return;
+  const now = readDetailsForm();
+  const patch = {};
+  for (const k of Object.keys(now)) {
+    if (now[k] === detailsBase[k]) continue;
+    patch[k] = k === 'formateurs'
+      ? now[k].split(',').map((x) => x.trim()).filter(Boolean)
+      : now[k];
+  }
+  if (!Object.keys(patch).length) { closeDetailsModal(); return; }
+  const btn = $('details-save');
+  btn.disabled = true;
+  try {
+    await pushOp({ op: 'setDetails', taskId: detailsTaskId, details: patch });
+    showToast('Fiche enregistrée');
+    closeDetailsModal();
+  } catch (e) {
+    $('details-error').textContent = e.message || 'Erreur';
+  } finally {
+    btn.disabled = false;
   }
 }

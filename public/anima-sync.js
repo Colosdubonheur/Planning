@@ -58,6 +58,19 @@
     return clean(id);
   }
 
+  // Summary of the Anima "fiche" (sommaire), shown read-only in the
+  // module's details in planning-bafa.
+  function ficheFor(pm, id) {
+    const t = pm._pmTemps && pm._pmTemps[id];
+    if (!t || !t.sommaire) return '';
+    let txt = String(t.sommaire);
+    try { if (typeof pm.pmStripHtml === 'function') txt = pm.pmStripHtml(txt); } catch (e) {}
+    try { if (typeof pm.pmDecodeEntities === 'function') txt = pm.pmDecodeEntities(txt); } catch (e) {}
+    txt = txt.replace(/<[^>]*>/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+    if (t.duree) txt = 'Durée Anima : ' + t.duree + '\n' + txt;
+    return txt.slice(0, 6000);
+  }
+
   // ── Models ────────────────────────────────────────────────────
   // Both sides are reduced to { "j1|matin": [{text, animaId}], ... }
   function animaModel(pm) {
@@ -191,7 +204,11 @@
     for (const d of state.days) {
       for (const s of ['matin', 'aprem', 'veillee']) {
         for (const it of a[d.id + '|' + s] || []) {
-          tasks.push({ dayId: d.id, slotId: s, text: it.text.slice(0, 300), animaId: it.animaId });
+          const fiche = ficheFor(pm, it.animaId);
+          tasks.push(Object.assign(
+            { dayId: d.id, slotId: s, text: it.text.slice(0, 300), animaId: it.animaId },
+            fiche ? { ficheAnima: fiche } : {}
+          ));
         }
       }
     }
