@@ -352,6 +352,32 @@
   #det-fiche { white-space: pre-wrap; font-size: 11px; color: #445; background: #F7F9FC; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow: auto; }
   @media (max-width: 600px) { .details-grid { grid-template-columns: 1fr; } }
 
+  /* Équipe */
+  .team-card { max-width: 560px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
+  .team-sub { color: #667; font-size: 12px; margin: -6px 0 12px; }
+  .team-section { border-top: 1px solid var(--border); padding: 12px 0 10px; }
+  .team-section-title { font-weight: 800; color: var(--navy); font-size: 13px; margin-bottom: 8px; }
+  .team-help { font-size: 12px; color: #556; margin: 0 0 8px; }
+  .team-list { list-style: none; margin: 0; padding: 0; }
+  .team-list li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EEF1F5; }
+  .team-list li:last-child { border-bottom: 0; }
+  .team-avatar { width: 32px; height: 32px; border-radius: 50%; background: #E3EAF4; color: var(--navy); display: flex; align-items: center; justify-content: center; font-weight: 800; flex-shrink: 0; }
+  .team-who { flex: 1; min-width: 0; }
+  .team-name { font-weight: 800; font-size: 13px; }
+  .team-desc { font-size: 11px; color: #778; }
+  .team-tag { font-size: 10px; font-weight: 800; border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+  .team-tag.owner { background: #FFE8CC; color: #C15F00; }
+  .team-tag.me { background: #E3EAF4; color: var(--navy); }
+  .team-remove { border: 0; background: transparent; color: #B33; font-weight: 700; font-size: 12px; cursor: pointer; padding: 4px 6px; }
+  .team-remove:hover { text-decoration: underline; }
+  .team-add-row { display: flex; gap: 8px; }
+  .team-add-row select { flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; }
+  .team-advanced { margin-right: auto; font-size: 12px; }
+  #team-invite-section > .modal-btn { margin-top: 2px; }
+  /* old "Tous les comptes" modal: checkbox rows were stretched */
+  .planning-access-list label { display: flex !important; justify-content: flex-start; align-items: center; gap: 8px; width: auto; margin: 0; font-weight: 600; text-transform: none; letter-spacing: 0; }
+  .modal-field .planning-access-list input[type="checkbox"] { width: auto; padding: 0; flex: 0 0 auto; }
+
   /* Invitations */
   .invite-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
   .invite-row input { width: 100%; font-size: 11px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; }
@@ -934,8 +960,8 @@
 <!-- ═══ USERS MODAL ═══════════════════════════════════════════════ -->
 <div class="modal-backdrop hidden" id="users-modal">
   <div class="modal-card">
-    <h3>Gestion des utilisateurs</h3>
-    <p style="font-size:8pt;color:#666;margin-bottom:8px">Vous voyez vos sous-utilisateurs et leurs sous-utilisateurs. Cochez les plannings pour gérer les accès.</p>
+    <h3>Tous les comptes</h3>
+    <p style="font-size:8pt;color:#666;margin-bottom:8px">Gestion avancée : tous les comptes que vous avez créés, avec leurs accès à chaque planning. Pour gérer l'équipe d'un planning, utilisez plutôt le bouton « 👥 Équipe ».</p>
     <ul class="users-list" id="users-list"></ul>
     <h3 style="font-size:11pt" id="new-user-section-title">Nouveau sous-utilisateur</h3>
     <div class="modal-field">
@@ -1019,15 +1045,36 @@
 </div>
 
 <!-- ═══ EDIT TASK MODAL ══════════════════════════════════════════ -->
-<div class="modal-backdrop hidden" id="invite-modal">
-  <div class="modal-card">
-    <h3>📨 Inviter l'équipe</h3>
-    <p style="font-size:12px;color:#556;margin:0 0 10px">Envoie ce lien (WhatsApp, mail…). Chaque personne choisit son identifiant et son mot de passe et peut ensuite modifier ce planning et remplir les fiches (rôle formateur). Lien valable 14 jours, pour plusieurs personnes.</p>
-    <div id="invite-list"></div>
-    <div class="modal-error" id="invite-error"></div>
+<div class="modal-backdrop hidden" id="team-modal">
+  <div class="modal-card team-card">
+    <h3>👥 Équipe du planning</h3>
+    <div class="team-sub" id="team-planning-name"></div>
+
+    <div class="team-section">
+      <div class="team-section-title">Qui a accès</div>
+      <ul class="team-list" id="team-list"></ul>
+    </div>
+
+    <div class="team-section" id="team-invite-section">
+      <div class="team-section-title">Inviter quelqu'un</div>
+      <p class="team-help">Envoie ce lien (WhatsApp, mail…). La personne choisit son identifiant et son mot de passe, puis peut modifier le planning et remplir les fiches. Valable 14 jours, pour plusieurs personnes.</p>
+      <div id="invite-list"></div>
+      <button class="modal-btn ghost" type="button" onclick="createInviteLink()">＋ Nouveau lien d'invitation</button>
+      <div class="modal-error" id="invite-error"></div>
+    </div>
+
+    <div class="team-section" id="team-add-section">
+      <div class="team-section-title">Ajouter quelqu'un qui a déjà un compte</div>
+      <div class="team-add-row">
+        <select id="team-add-select"></select>
+        <button class="modal-btn primary" type="button" onclick="addExistingMember()">Ajouter</button>
+      </div>
+    </div>
+
+    <div class="modal-error" id="team-error"></div>
     <div class="modal-actions">
-      <button class="modal-btn ghost" type="button" onclick="createInviteLink()">Nouveau lien</button>
-      <button class="modal-btn primary" type="button" onclick="closeInviteModal()">Fermer</button>
+      <button class="modal-btn ghost team-advanced" type="button" id="team-advanced-btn" onclick="closeTeamModal(); openUsersModal();">Gestion avancée des comptes</button>
+      <button class="modal-btn primary" type="button" onclick="closeTeamModal()">Fermer</button>
     </div>
   </div>
 </div>
@@ -1191,7 +1238,6 @@
         <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
-        <button type="button" id="btn-invite" title="Inviter l'équipe (lien)" onclick="openInviteModal()">📨</button>
         <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
         <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
@@ -1210,7 +1256,7 @@
       </div>
       <button class="btn-users" id="btn-login" style="display:none" onclick="openLoginGate()">🔒 <span class="btn-label">Se connecter</span></button>
       <button class="btn-edit-mode" id="btn-edit-mode" style="display:none" onclick="toggleEditMode()">✎ <span class="btn-label">Modifier</span></button>
-      <button class="btn-users" id="btn-users" style="display:none" onclick="openUsersModal()">👥 <span class="btn-label">Utilisateurs</span></button>
+      <button class="btn-users" id="btn-users" style="display:none" onclick="openTeamModal()">👥 <span class="btn-label">Équipe</span></button>
       <button class="btn-reset" id="btn-reset" style="display:none" onclick="resetAll()">↺ <span class="btn-label">Réinitialiser</span></button>
       <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
       <button class="btn-logout" id="btn-logout" style="display:none" onclick="logout()">⇦ <span class="btn-label">Quitter</span></button>

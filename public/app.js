@@ -240,7 +240,6 @@ function applyUserUI() {
   $('btn-rename-planning').style.display = owner ? '' : 'none';
   $('btn-delete-planning').style.display = owner ? '' : 'none';
   $('btn-anima-sync').style.display = owner ? '' : 'none';
-  $('btn-invite').style.display = owner ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
 
   refreshEmptyState();
@@ -343,7 +342,6 @@ function renderPlanningSelector() {
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
-  $('btn-invite').style.display = canOwn ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
 
   refreshEmptyState();
@@ -1918,14 +1916,116 @@ function inviteUrl(id) {
   return window.location.origin + '/?invite=' + encodeURIComponent(id);
 }
 
-async function openInviteModal() {
-  if (!currentPlanningId) return;
+// ── ÉQUIPE DU PLANNING ─────────────────────────────────────────
+// One place to see who works on the current planning, invite people with a
+// link, add someone who already has an account, or remove access.  The old
+// all-accounts view stays reachable as "Gestion avancée des comptes".
+const ROLE_DESC = {
+  directeur: 'Directeur · gère le planning',
+  formateur: 'Formateur · modifie le planning et les fiches',
+};
+
+async function openTeamModal() {
+  if (!currentPlanningId) { openUsersModal(); return; }
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  $('team-planning-name').textContent = current ? current.name : '';
+  $('team-error').textContent = '';
   $('invite-error').textContent = '';
-  $('invite-modal').classList.remove('hidden');
-  await refreshInviteList();
+  const owner = isOwnerOfCurrent();
+  $('team-invite-section').style.display = owner ? '' : 'none';
+  $('team-add-section').style.display = owner ? '' : 'none';
+  $('team-advanced-btn').style.display = canManageUsers() ? '' : 'none';
+  $('team-modal').classList.remove('hidden');
+  await refreshTeam();
+  if (owner) await refreshInviteList();
 }
 
-function closeInviteModal() { $('invite-modal').classList.add('hidden'); }
+function closeTeamModal() { $('team-modal').classList.add('hidden'); }
+
+// Kept for compatibility with older links/buttons.
+function openInviteModal() { return openTeamModal(); }
+function closeInviteModal() { closeTeamModal(); }
+
+let teamMembers = [];
+
+async function refreshTeam() {
+  const list = $('team-list');
+  list.innerHTML = '<li><em>Chargement…</em></li>';
+  try {
+    const { members } = await apiFetch('/api/plannings/' + encodeURIComponent(currentPlanningId) + '/members');
+    teamMembers = members;
+    const owner = isOwnerOfCurrent();
+    const me = currentUser && currentUser.user;
+    list.innerHTML = members.map((m) => {
+      const desc = (ROLE_DESC[m.role] || m.role)
+        + (m.allPlannings ? ' · accès à tous les plannings' : '')
+        + (m.invitedBy && !m.isOwner ? ` · ajouté par ${m.invitedBy}` : '');
+      const canRemove = owner && !m.isOwner && m.user !== me;
+      return `<li>
+        <span class="team-avatar">${escapeHtml(m.user.charAt(0).toUpperCase())}</span>
+        <span class="team-who">
+          <span class="team-name">${escapeHtml(m.user)}</span>${m.isOwner ? '<span class="team-tag owner">Responsable</span>' : ''}${m.user === me ? '<span class="team-tag me">Vous</span>' : ''}
+          <div class="team-desc">${escapeHtml(desc)}</div>
+        </span>
+        ${canRemove ? `<button type="button" class="team-remove" onclick="removeMember('${escapeHtml(m.user)}')">Retirer</button>` : ''}
+      </li>`;
+    }).join('');
+    if (owner) await refreshAddableAccounts();
+  } catch (e) {
+    list.innerHTML = '';
+    $('team-error').textContent = e.message || 'Erreur';
+  }
+}
+
+async function refreshAddableAccounts() {
+  const sel = $('team-add-select');
+  try {
+    const data = await apiFetch(API_USERS);
+    const inTeam = new Set(teamMembers.map((m) => m.user));
+    const addable = (data.users || []).filter((u) => !inTeam.has(u.user));
+    sel.innerHTML = addable.length
+      ? '<option value="">Choisir un compte…</option>' + addable.map((u) => `<option value="${escapeHtml(u.user)}">${escapeHtml(u.user)} (${u.role === 'directeur' ? 'directeur' : 'formateur'})</option>`).join('')
+      : '<option value="">Tous vos comptes ont déjà accès</option>';
+    sel.disabled = !addable.length;
+  } catch {
+    $('team-add-section').style.display = 'none';
+  }
+}
+
+async function addExistingMember() {
+  const user = $('team-add-select').value;
+  if (!user) return;
+  $('team-error').textContent = '';
+  try {
+    await apiFetch(API_USERS + '/' + encodeURIComponent(user) + '/plannings', {
+      method: 'POST',
+      body: JSON.stringify({ planningId: currentPlanningId }),
+    });
+    showToast(user + ' a maintenant accès au planning');
+    await refreshTeam();
+  } catch (e) {
+    $('team-error').textContent = e.message || 'Erreur';
+  }
+}
+
+async function removeMember(user) {
+  const li = [...document.querySelectorAll('#team-list li')].find((x) => x.querySelector('.team-name')?.textContent === user);
+  const btn = li && li.querySelector('.team-remove');
+  if (btn && btn.dataset.confirm !== '1') {
+    btn.dataset.confirm = '1';
+    btn.textContent = 'Confirmer ?';
+    setTimeout(() => { if (btn.isConnected) { btn.dataset.confirm = ''; btn.textContent = 'Retirer'; } }, 4000);
+    return;
+  }
+  $('team-error').textContent = '';
+  try {
+    await apiFetch(API_USERS + '/' + encodeURIComponent(user) + '/plannings/' + encodeURIComponent(currentPlanningId), { method: 'DELETE' });
+    showToast(user + " n'a plus accès à ce planning");
+    await refreshTeam();
+  } catch (e) {
+    $('team-error').textContent = e.message || 'Erreur';
+  }
+}
 
 async function refreshInviteList() {
   const box = $('invite-list');
@@ -1936,7 +2036,7 @@ async function refreshInviteList() {
     const joined = invites.flatMap((i) => i.uses || []);
     let html = '';
     if (!active.length) {
-      html += '<p class="invite-empty">Aucun lien actif. Crée un lien puis envoie-le à ton équipe.</p>';
+      html += '<p class="invite-empty">Aucun lien actif pour le moment.</p>';
     }
     for (const inv of active) {
       const url = inviteUrl(inv.id);
