@@ -5,7 +5,9 @@ import {
   buildClearCookie,
   requireAuth,
   getUser,
+  SYNC_TOKEN_TTL_SEC,
 } from "./_lib/auth.mjs";
+import { getPlanningMeta, userHasAccess } from "./_lib/plannings.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
@@ -73,7 +75,30 @@ export default async (req) => {
     return json({ user: auth.user.user, role: auth.user.role, isMaster });
   }
 
+  // POST /api/auth/sync-token  { planningId }
+  // Issues a long-lived token bound to one planning, used by the
+  // "Synchro Anima" bookmarklet (which runs on plateforme.anima-lorraine.fr
+  // and therefore cannot use our HttpOnly cookie).  Planning owner only.
+  if (path.endsWith("/sync-token") && req.method === "POST") {
+    const auth = requireAuth(req);
+    if (auth.error) return auth.error;
+    let body;
+    try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
+    const planningId = body && typeof body.planningId === "string" ? body.planningId : "";
+    if (!planningId) return json({ error: "Paramètre 'planningId' requis" }, { status: 400 });
+    const meta = await getPlanningMeta(planningId);
+    if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
+    if (meta.ownerId !== auth.user.user || !(await userHasAccess(auth.user.user, planningId))) {
+      return json({ error: "Seul le propriétaire du planning peut activer la synchro" }, { status: 403 });
+    }
+    const token = signToken(
+      { user: auth.user.user, role: auth.user.role, scope: "sync", planningId },
+      SYNC_TOKEN_TTL_SEC
+    );
+    return json({ token, planningId, expiresInDays: Math.round(SYNC_TOKEN_TTL_SEC / 86400) });
+  }
+
   return json({ error: "Not found" }, { status: 404 });
 };
 
-export const config = { path: ["/api/auth/login", "/api/auth/logout", "/api/auth/me"] };
+export const config = { path: ["/api/auth/login", "/api/auth/logout", "/api/auth/me", "/api/auth/sync-token"] };

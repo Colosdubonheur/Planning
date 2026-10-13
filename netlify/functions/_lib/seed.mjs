@@ -17,7 +17,21 @@ export const SLOTS = [
   { id: "matin", label: "Matin"       },
   { id: "repas", label: "Repas"       },
   { id: "aprem", label: "Après-midi"  },
+  { id: "veillee", label: "Veillée"   },
 ];
+
+// Plannings created before the "Veillée" slot existed store their own
+// `slots` array.  Upgrade them in place on read/write so every planning
+// exposes the same set of slots (missing ones are appended in canonical
+// order, existing labels are kept).
+export function ensureSlots(state) {
+  if (!state || !Array.isArray(state.slots)) return state;
+  const have = new Set(state.slots.map((s) => s && s.id));
+  for (const slot of SLOTS) {
+    if (!have.has(slot.id)) state.slots.push({ ...slot });
+  }
+  return state;
+}
 
 // Matin and Aprem tasks. The Repas slot is not editable; it's shown as a
 // fixed "Repas" cell.

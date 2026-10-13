@@ -239,6 +239,9 @@ function applyUserUI() {
   $('btn-reset').style.display = owner ? '' : 'none';
   $('btn-rename-planning').style.display = owner ? '' : 'none';
   $('btn-delete-planning').style.display = owner ? '' : 'none';
+  $('btn-anima-sync').style.display = owner ? '' : 'none';
+  $('btn-invite').style.display = owner ? '' : 'none';
+  $('btn-history').style.display = owner ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -248,6 +251,7 @@ function toggleEditMode() {
   editMode = !editMode;
   document.body.classList.toggle('edit-mode', editMode);
   $('btn-edit-mode').classList.toggle('active', editMode);
+  initDragAndDrop();
   applyUserUI();
   renderPlanning();
   setSyncStatus('ok', editMode ? 'Mode édition ✎' : 'En ligne ✓');
@@ -338,6 +342,9 @@ function renderPlanningSelector() {
   const canOwn = current && currentUser && current.ownerId === currentUser.user;
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
+  $('btn-anima-sync').style.display = canOwn ? '' : 'none';
+  $('btn-invite').style.display = canOwn ? '' : 'none';
+  $('btn-history').style.display = canOwn ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -711,7 +718,8 @@ function renderPlanning() {
           const doneCls = t.done ? ' done' : '';
           html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
             <span class="chk"></span>
-            <span class="task-text">${escapeHtml(t.text)}</span>
+            <span class="task-text">${escapeHtml(t.text)}${taskBadges(t)}</span>
+            ${showDetailsButton(t) ? `<button type="button" class="task-info" data-action="details" title="Fiche du module" aria-label="Fiche du module">›</button>` : ''}
           </li>`;
         }
         html += '</ul>';
@@ -728,10 +736,64 @@ function renderPlanning() {
 
   updateProgress();
   lastVersion = currentState.version || 0;
+  initDragAndDrop();
+  refreshDetailsModal();
+}
+
+// ── DRAG & DROP (edit mode) ────────────────────────────────────
+// Uses SortableJS (loaded from cdnjs in index.html) because native HTML5
+// drag & drop does not work with touch on iPhone.  Active only in edit
+// mode so a simple tap still ticks a task.  On touch devices a short press
+// (200 ms) starts the drag, so scrolling the table keeps working.
+let sortables = [];
+let isDragging = false;
+
+function initDragAndDrop() {
+  for (const s of sortables) { try { s.destroy(); } catch {} }
+  sortables = [];
+  if (typeof Sortable === 'undefined') return;
+  if (!editMode || !canEditContent()) return;
+  document.querySelectorAll('#planning-table td.cell ul.tasks').forEach((ul) => {
+    sortables.push(Sortable.create(ul, {
+      group: 'tasks',
+      animation: 150,
+      delay: 200,
+      delayOnTouchOnly: true,
+      ghostClass: 'drag-ghost',
+      chosenClass: 'drag-chosen',
+      onStart() { isDragging = true; closeTaskMenu(); },
+      async onEnd(evt) {
+        isDragging = false;
+        const taskId = evt.item && evt.item.dataset.taskId;
+        const cell = evt.to && evt.to.closest('td.cell');
+        if (!taskId || !cell) return;
+        if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
+        try {
+          await pushOp({
+            op: 'move',
+            taskId,
+            dayId: cell.dataset.day,
+            slotId: cell.dataset.slot,
+            index: evt.newIndex,
+          });
+        } catch (err) {
+          showToast(err.message || 'Déplacement impossible');
+          renderPlanning();
+        }
+      },
+    }));
+  });
 }
 
 // ── EVENT DELEGATION ───────────────────────────────────────────
 function onTableClick(e) {
+  const infoBtn = e.target.closest('[data-action="details"]');
+  if (infoBtn) {
+    e.stopPropagation();
+    const li = infoBtn.closest('li.task');
+    if (li) openDetailsModal(li.dataset.taskId);
+    return;
+  }
   const addBtn = e.target.closest('[data-action="add"]');
   if (addBtn) {
     e.stopPropagation();
@@ -824,7 +886,8 @@ function openTaskMenu(taskId, anchor) {
 
   const menu = document.createElement('div');
   menu.className = 'task-menu';
-  let html = '<button type="button" data-menu-action="rename">✎ Renommer</button>';
+  let html = '<button type="button" data-menu-action="details">📋 Fiche du module</button>';
+  html += '<button type="button" data-menu-action="rename">✎ Renommer</button>';
   if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
   if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
   html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
@@ -846,7 +909,8 @@ function openTaskMenu(taskId, anchor) {
     closeTaskMenu();
     const t = currentState.tasks.find((x) => x.id === taskId);
     if (!t) return;
-    if (action === 'rename') openEditModal(t);
+    if (action === 'details') openDetailsModal(t.id);
+    else if (action === 'rename') openEditModal(t);
     else if (action === 'move') openMoveModal(t);
     else if (action === 'remove') confirmRemove(t);
     else if (action === 'up' || action === 'down') {
@@ -1336,7 +1400,7 @@ async function fetchState() {
 }
 
 async function poll() {
-  if (isSyncing) return;
+  if (isSyncing || isDragging) return;
   if (!currentPlanningId) return;
   try {
     const state = await apiFetch(withPlanning(API_STATE));
@@ -1496,6 +1560,8 @@ async function init() {
   } else {
     await startPublic();
   }
+  const inviteId = new URLSearchParams(window.location.search).get('invite');
+  if (inviteId) openJoinModal(inviteId);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -1525,3 +1591,475 @@ window.closePlanningSettingsModal = closePlanningSettingsModal;
 window.submitPlanningSettings = submitPlanningSettings;
 
 window.addEventListener('DOMContentLoaded', init);
+
+// ── SYNCHRO ANIMA ──────────────────────────────────────────────
+// Generates a bookmarklet bound to the current planning.  The bookmarklet
+// runs on plateforme.anima-lorraine.fr and loads /anima-sync.js, which
+// compares both plannings and pushes in the direction chosen by the user.
+async function openAnimaSyncModal() {
+  if (!currentPlanningId) return;
+  $('anima-sync-error').textContent = '';
+  $('anima-sync-link-wrap').style.display = 'none';
+  $('anima-sync-modal').classList.remove('hidden');
+  try {
+    const data = await apiFetch('/api/auth/sync-token', {
+      method: 'POST',
+      body: JSON.stringify({ planningId: currentPlanningId }),
+    });
+    const cfg = { api: window.location.origin, planningId: currentPlanningId, token: data.token };
+    const code = 'javascript:(function(){window.__PLANNING_BAFA=' + JSON.stringify(cfg)
+      + ';var s=document.createElement("script");s.charset="utf-8";s.src=' + JSON.stringify(window.location.origin + '/anima-sync.js?v=')
+      + '+Date.now();document.body.appendChild(s);})();';
+    const a = $('anima-sync-link');
+    a.setAttribute('href', code);
+    const current = planningsList.find((p) => p.id === currentPlanningId);
+    a.textContent = '🔄 Synchro ' + (current ? current.name : 'planning');
+    $('anima-sync-code').value = code;
+    $('anima-sync-expiry').textContent = data.expiresInDays + ' jours';
+    $('anima-sync-link-wrap').style.display = '';
+  } catch (e) {
+    $('anima-sync-error').textContent = e.message || 'Erreur';
+  }
+}
+
+function closeAnimaSyncModal() { $('anima-sync-modal').classList.add('hidden'); }
+
+async function copyAnimaSyncCode() {
+  const ta = $('anima-sync-code');
+  try { await navigator.clipboard.writeText(ta.value); showToast('Code du favori copié'); }
+  catch { ta.select(); document.execCommand('copy'); showToast('Code du favori copié'); }
+}
+
+// ── HISTORIQUE DES VERSIONS ────────────────────────────────────
+const SLOT_LABELS = { matin: 'Matin', aprem: 'Après-midi', apm: 'Après-midi', veillee: 'Veillée' };
+
+async function openHistoryModal() {
+  if (!currentPlanningId) return;
+  $('history-modal').classList.remove('hidden');
+  $('history-detail').innerHTML = '';
+  const list = $('history-list');
+  list.innerHTML = '<em>Chargement…</em>';
+  try {
+    const { versions } = await apiFetch('/api/history?planning=' + encodeURIComponent(currentPlanningId));
+    if (!versions.length) {
+      list.innerHTML = '<em>Aucune version enregistrée pour l\'instant. Une copie est faite automatiquement à chaque synchro avec Anima et avant chaque restauration.</em>';
+      return;
+    }
+    list.innerHTML = versions.map((v) => `<div class="history-row">
+        <span class="history-src ${v.source}">${v.source === 'anima' ? 'Anima' : 'planning-bafa'}</span>
+        <span class="history-date">${escapeHtml(new Date(v.at).toLocaleString('fr-FR'))}</span>
+        <button type="button" class="modal-btn ghost" onclick="showHistoryVersion('${escapeHtml(v.id)}')">Voir</button>
+      </div>`).join('');
+  } catch (e) {
+    list.innerHTML = '<span class="modal-error">' + escapeHtml(e.message || 'Erreur') + '</span>';
+  }
+}
+
+function closeHistoryModal() { $('history-modal').classList.add('hidden'); }
+
+let historyCurrent = null;
+
+// Turn either kind of snapshot into [{ day, slot, items: [text] }].
+function snapshotCells(snap) {
+  const cells = [];
+  if (snap.source === 'anima') {
+    const { jours = {}, titles = {} } = snap.data || {};
+    for (const [key, arr] of Object.entries(jours)) {
+      const m = /^(j\d+)_(matin|apm|veillee)$/.exec(key);
+      if (!m || !Array.isArray(arr) || !arr.length) continue;
+      cells.push({
+        day: m[1], slot: m[2],
+        items: arr.map((e) => {
+          const id = typeof e === 'string' ? e : e && e.id;
+          return titles[id] || id;
+        }),
+      });
+    }
+  } else {
+    const tasks = (snap.data && snap.data.tasks) || [];
+    const map = {};
+    for (const t of tasks.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
+      const k = t.dayId + '|' + t.slotId;
+      (map[k] = map[k] || { day: t.dayId, slot: t.slotId, items: [] }).items.push(t.text);
+    }
+    cells.push(...Object.values(map));
+  }
+  const n = (d) => parseInt(String(d).slice(1), 10) || 0;
+  const o = (s) => ['matin', 'aprem', 'apm', 'veillee'].indexOf(s);
+  return cells.sort((a, b) => n(a.day) - n(b.day) || o(a.slot) - o(b.slot));
+}
+
+async function showHistoryVersion(id) {
+  const box = $('history-detail');
+  box.innerHTML = '<em>Chargement…</em>';
+  try {
+    const { snapshot } = await apiFetch('/api/history?planning=' + encodeURIComponent(currentPlanningId) + '&id=' + encodeURIComponent(id));
+    historyCurrent = snapshot;
+    const cells = snapshotCells(snapshot);
+    const title = (snapshot.source === 'anima' ? 'Copie Anima' : 'Copie planning-bafa')
+      + ' du ' + new Date(snapshot.at).toLocaleString('fr-FR')
+      + (snapshot.label ? ' (' + snapshot.label + ')' : '');
+    let html = `<h4>${escapeHtml(title)}</h4><div class="history-cells">`;
+    for (const c of cells) {
+      html += `<div class="history-cell"><b>${escapeHtml(c.day.toUpperCase())} · ${escapeHtml(SLOT_LABELS[c.slot] || c.slot)}</b><ul>`
+        + c.items.map((t) => `<li>${escapeHtml(t)}</li>`).join('') + '</ul></div>';
+    }
+    html += '</div><div class="modal-actions">'
+      + '<button type="button" class="modal-btn ghost" onclick="downloadHistoryVersion()">⬇ Télécharger</button>'
+      + '<button type="button" class="modal-btn primary" onclick="restoreHistoryVersion()">↺ Restaurer dans planning-bafa</button>'
+      + '</div><div class="modal-error" id="history-error"></div>';
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '<span class="modal-error">' + escapeHtml(e.message || 'Erreur') + '</span>';
+  }
+}
+
+function downloadHistoryVersion() {
+  if (!historyCurrent) return;
+  const blob = new Blob([JSON.stringify(historyCurrent, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `planning-${currentPlanningId}-${historyCurrent.source}-${historyCurrent.id}.json`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+// Restore a version into planning-bafa (the current content is saved as a
+// new version first, server side).  An Anima copy can be pushed back to
+// Anima afterwards with the bookmarklet ("planning-bafa → Anima").
+async function restoreHistoryVersion() {
+  if (!historyCurrent || !currentState) return;
+  const dayIds = new Set(currentState.days.map((d) => d.id));
+  const tasks = [];
+  if (historyCurrent.source === 'anima') {
+    const { jours = {}, titles = {} } = historyCurrent.data || {};
+    for (const [key, arr] of Object.entries(jours)) {
+      const m = /^(j\d+)_(matin|apm|veillee)$/.exec(key);
+      if (!m || !dayIds.has(m[1]) || !Array.isArray(arr)) continue;
+      const slotId = m[2] === 'apm' ? 'aprem' : m[2];
+      for (const e of arr) {
+        const id = typeof e === 'string' ? e : e && e.id;
+        if (!id) continue;
+        tasks.push({ dayId: m[1], slotId, text: String(titles[id] || id).slice(0, 300), animaId: id });
+      }
+    }
+  } else {
+    const snapTasks = ((historyCurrent.data && historyCurrent.data.tasks) || [])
+      .slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    for (const t of snapTasks) {
+      if (!dayIds.has(t.dayId)) continue;
+      tasks.push({ dayId: t.dayId, slotId: t.slotId, text: t.text, ...(t.animaId ? { animaId: t.animaId } : {}) });
+    }
+  }
+  try {
+    await pushOp({ op: 'replaceAll', tasks, reason: 'Avant restauration d\'une version' });
+    showToast('Version restaurée');
+    closeHistoryModal();
+  } catch (e) {
+    const err = $('history-error');
+    if (err) err.textContent = e.message || 'Erreur';
+  }
+}
+
+
+// ── FICHE DU MODULE (détails collaboratifs) ────────────────────
+// Each module can carry a "fiche" prepared by the team: formateurs, durée,
+// objectifs, déroulé, matériel, notes internes, statut de préparation and a
+// short text for the trainees (the only part shown on the public link).
+// Saving sends only the fields changed in this modal, so two people editing
+// different fields of the same module never overwrite each other; a field
+// changed remotely while open is refreshed unless you are editing it.
+const DETAIL_FIELDS = ['resume', 'duree', 'objectifs', 'deroule', 'materiel', 'notes'];
+const STATUS_LABELS = { a_preparer: 'À préparer', en_cours: 'En cours', pret: 'Prêt' };
+let detailsTaskId = null;
+let detailsBase = null; // values when the modal was opened / last synced
+
+function taskBadges(t) {
+  const d = t.details;
+  if (!d) return '';
+  let out = '';
+  if (d.statut) out += `<span class="badge-status st-${escapeHtml(d.statut)}" title="${escapeHtml(STATUS_LABELS[d.statut] || '')}"></span>`;
+  if (Array.isArray(d.formateurs) && d.formateurs.length) {
+    out += `<span class="badge-who">${escapeHtml(d.formateurs.map((n) => n.split(/\s+/)[0]).join(', '))}</span>`;
+  }
+  if (d.duree) out += `<span class="badge-dur">${escapeHtml(d.duree)}</span>`;
+  return out ? `<span class="task-badges">${out}</span>` : '';
+}
+
+function showDetailsButton(t) {
+  if (canEditContent()) return true;
+  return !!(t.details && (t.details.resume || t.details.duree));
+}
+
+function detailsValues(t) {
+  const d = (t && t.details) || {};
+  const v = { statut: d.statut || '', formateurs: (d.formateurs || []).join(', ') };
+  for (const f of DETAIL_FIELDS) v[f] = d[f] || '';
+  return v;
+}
+
+function knownFormateurs() {
+  const set = new Set();
+  for (const t of (currentState && currentState.tasks) || []) {
+    for (const n of (t.details && t.details.formateurs) || []) set.add(n);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, 'fr'));
+}
+
+function openDetailsModal(taskId) {
+  const t = currentState && currentState.tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  closeTaskMenu();
+  detailsTaskId = taskId;
+  detailsBase = detailsValues(t);
+  const editable = canEditContent();
+  const day = currentState.days.find((d) => d.id === t.dayId);
+  const slot = currentState.slots.find((x) => x.id === t.slotId);
+  $('details-title').textContent = t.text;
+  $('details-where').textContent = [day && `${day.short} ${day.name} ${day.date}`, slot && slot.label].filter(Boolean).join(' · ');
+  for (const f of DETAIL_FIELDS) {
+    const el = $('det-' + f);
+    el.value = detailsBase[f];
+    el.readOnly = !editable;
+  }
+  $('det-formateurs').value = detailsBase.formateurs;
+  $('det-formateurs').readOnly = !editable;
+  $('det-statut').value = detailsBase.statut;
+  $('det-statut').disabled = !editable;
+  $('det-formateurs-list').innerHTML = knownFormateurs().map((n) => `<option value="${escapeHtml(n)}">`).join('');
+  // Team-only sections are hidden for anonymous viewers (the server does
+  // not send them anyway).
+  document.querySelectorAll('#details-modal .team-only').forEach((el) => { el.style.display = editable ? '' : 'none'; });
+  const fiche = (t.details && t.details.ficheAnima) || '';
+  $('det-fiche-wrap').style.display = editable && fiche ? '' : 'none';
+  $('det-fiche').textContent = fiche;
+  $('details-save').style.display = editable ? '' : 'none';
+  $('details-error').textContent = '';
+  updateDetailsMeta(t);
+  $('details-modal').classList.remove('hidden');
+}
+
+function updateDetailsMeta(t) {
+  const d = t.details || {};
+  $('details-meta').textContent = d.updatedBy
+    ? `Dernière modification : ${d.updatedBy}, ${new Date(d.updatedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}`
+    : '';
+}
+
+function closeDetailsModal() {
+  $('details-modal').classList.add('hidden');
+  detailsTaskId = null;
+  detailsBase = null;
+}
+
+function readDetailsForm() {
+  const v = { statut: $('det-statut').value, formateurs: $('det-formateurs').value };
+  for (const f of DETAIL_FIELDS) v[f] = $('det-' + f).value;
+  return v;
+}
+
+// Called after every render: merge remote changes into the open modal.
+function refreshDetailsModal() {
+  if (!detailsTaskId || $('details-modal').classList.contains('hidden')) return;
+  const t = currentState && currentState.tasks.find((x) => x.id === detailsTaskId);
+  if (!t) { closeDetailsModal(); showToast('Ce module a été supprimé'); return; }
+  const remote = detailsValues(t);
+  const local = readDetailsForm();
+  const changedRemotely = [];
+  for (const k of Object.keys(remote)) {
+    if (remote[k] === detailsBase[k]) continue;
+    // Not touched locally: take the remote value.
+    if (local[k] === detailsBase[k]) {
+      const el = k === 'statut' ? $('det-statut') : k === 'formateurs' ? $('det-formateurs') : $('det-' + k);
+      el.value = remote[k];
+      changedRemotely.push(k);
+    }
+    detailsBase[k] = remote[k];
+  }
+  $('details-title').textContent = t.text;
+  updateDetailsMeta(t);
+  if (changedRemotely.length && t.details && t.details.updatedBy !== (currentUser && currentUser.user)) {
+    showToast(`Fiche mise à jour par ${t.details.updatedBy}`);
+  }
+}
+
+async function saveDetails() {
+  if (!detailsTaskId) return;
+  const now = readDetailsForm();
+  const patch = {};
+  for (const k of Object.keys(now)) {
+    if (now[k] === detailsBase[k]) continue;
+    patch[k] = k === 'formateurs'
+      ? now[k].split(',').map((x) => x.trim()).filter(Boolean)
+      : now[k];
+  }
+  if (!Object.keys(patch).length) { closeDetailsModal(); return; }
+  const btn = $('details-save');
+  btn.disabled = true;
+  try {
+    await pushOp({ op: 'setDetails', taskId: detailsTaskId, details: patch });
+    showToast('Fiche enregistrée');
+    closeDetailsModal();
+  } catch (e) {
+    $('details-error').textContent = e.message || 'Erreur';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+
+// ── INVITATIONS ────────────────────────────────────────────────
+// The owner creates a link (valid 14 days, usable by several people) and
+// sends it, e.g. on WhatsApp.  Whoever opens it picks an identifiant and a
+// password (or joins with their existing account) and gets formateur access
+// to the planning.
+function inviteUrl(id) {
+  return window.location.origin + '/?invite=' + encodeURIComponent(id);
+}
+
+async function openInviteModal() {
+  if (!currentPlanningId) return;
+  $('invite-error').textContent = '';
+  $('invite-modal').classList.remove('hidden');
+  await refreshInviteList();
+}
+
+function closeInviteModal() { $('invite-modal').classList.add('hidden'); }
+
+async function refreshInviteList() {
+  const box = $('invite-list');
+  box.innerHTML = '<em>Chargement…</em>';
+  try {
+    const { invites } = await apiFetch('/api/invites?planning=' + encodeURIComponent(currentPlanningId));
+    const active = invites.filter((i) => i.status === 'valide');
+    const joined = invites.flatMap((i) => i.uses || []);
+    let html = '';
+    if (!active.length) {
+      html += '<p class="invite-empty">Aucun lien actif. Crée un lien puis envoie-le à ton équipe.</p>';
+    }
+    for (const inv of active) {
+      const url = inviteUrl(inv.id);
+      html += `<div class="invite-row">
+        <input readonly value="${escapeHtml(url)}" onclick="this.select()">
+        <div class="invite-actions">
+          <button type="button" class="modal-btn ghost" onclick="copyText('${escapeHtml(url)}')">Copier</button>
+          <a class="modal-btn whatsapp" target="_blank" rel="noopener" href="${escapeHtml(whatsappLink(url))}">WhatsApp</a>
+          <button type="button" class="modal-btn ghost" onclick="revokeInvite('${escapeHtml(inv.id)}')">Désactiver</button>
+        </div>
+        <div class="invite-meta">Valable jusqu'au ${escapeHtml(new Date(inv.expiresAt).toLocaleDateString('fr-FR'))}</div>
+      </div>`;
+    }
+    if (joined.length) {
+      html += '<div class="invite-joined"><b>Ont rejoint :</b> ' + joined
+        .map((u) => escapeHtml(u.user) + (u.created ? ' (nouveau compte)' : '')).join(', ') + '</div>';
+    }
+    box.innerHTML = html;
+  } catch (e) {
+    box.innerHTML = '';
+    $('invite-error').textContent = e.message || 'Erreur';
+  }
+}
+
+function whatsappLink(url) {
+  const current = planningsList.find((p) => p.id === currentPlanningId);
+  const name = current ? current.name : 'le planning';
+  const text = `Rejoins le planning « ${name} » pour qu'on prépare les temps ensemble : ${url}`;
+  return 'https://wa.me/?text=' + encodeURIComponent(text);
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); showToast('Lien copié'); }
+  catch { showToast('Copie impossible, sélectionne le lien'); }
+}
+
+async function createInviteLink() {
+  $('invite-error').textContent = '';
+  try {
+    await apiFetch('/api/invites', { method: 'POST', body: JSON.stringify({ planningId: currentPlanningId }) });
+    await refreshInviteList();
+  } catch (e) {
+    $('invite-error').textContent = e.message || 'Erreur';
+  }
+}
+
+async function revokeInvite(id) {
+  try {
+    await apiFetch('/api/invites?id=' + encodeURIComponent(id), { method: 'DELETE' });
+    await refreshInviteList();
+  } catch (e) {
+    $('invite-error').textContent = e.message || 'Erreur';
+  }
+}
+
+// Landing for someone who opened an invitation link.
+let joinInviteId = null;
+
+async function openJoinModal(id) {
+  joinInviteId = id;
+  $('join-error').textContent = '';
+  $('join-modal').classList.remove('hidden');
+  $('join-form').style.display = 'none';
+  $('join-logged').style.display = 'none';
+  $('join-title').textContent = 'Invitation';
+  $('join-submit').style.display = 'none';
+  try {
+    const info = await apiFetch('/api/invites?id=' + encodeURIComponent(id));
+    if (info.status !== 'valide') {
+      $('join-intro').textContent = info.status === 'expire'
+        ? "Ce lien d'invitation a expiré. Demande un nouveau lien."
+        : "Ce lien d'invitation n'est plus valide. Demande un nouveau lien.";
+      return;
+    }
+    $('join-title').textContent = info.planningName || 'Planning';
+    $('join-intro').textContent = `${info.invitedBy} t'invite à préparer ce planning avec l'équipe.`;
+    $('join-submit').style.display = '';
+    if (currentUser) {
+      $('join-logged-name').textContent = currentUser.user;
+      $('join-logged').style.display = '';
+    } else {
+      $('join-form').style.display = '';
+      setTimeout(() => $('join-user').focus(), 50);
+    }
+  } catch (e) {
+    $('join-intro').textContent = "Ce lien d'invitation n'est pas valide.";
+  }
+}
+
+function closeJoinModal() {
+  $('join-modal').classList.add('hidden');
+  const url = new URL(window.location.href);
+  url.searchParams.delete('invite');
+  history.replaceState(null, '', url.toString());
+}
+
+async function submitJoin(e) {
+  if (e) e.preventDefault();
+  const btn = $('join-submit');
+  const body = { id: joinInviteId };
+  if (!currentUser) {
+    body.user = $('join-user').value.trim();
+    body.password = $('join-password').value;
+    if ($('join-password2').value !== body.password) {
+      $('join-error').textContent = 'Les deux mots de passe sont différents';
+      return;
+    }
+  }
+  btn.disabled = true;
+  $('join-error').textContent = '';
+  try {
+    const res = await apiFetch('/api/invites/accept', { method: 'POST', body: JSON.stringify(body) });
+    const url = new URL(window.location.href);
+    url.searchParams.delete('invite');
+    url.searchParams.set('planning', res.planningId);
+    history.replaceState(null, '', url.toString());
+    $('join-modal').classList.add('hidden');
+    await loadMe();
+    await startAuthenticated();
+    showToast(res.created ? 'Compte créé, bienvenue !' : 'Planning ajouté à ton compte');
+  } catch (err) {
+    $('join-error').textContent = err.message || 'Erreur';
+  } finally {
+    btn.disabled = false;
+  }
+}

@@ -21,6 +21,8 @@
     --repas-bd:  #A8D5B5;
     --aprem-bg:  #EFF4FF;
     --aprem-bd:  #B0C8F0;
+    --veil-bg:   #F3EFFB;
+    --veil-bd:   #C9B8E8;
     --done-clr:  #B0BDB0;
     --done-bg:   #F5F6F5;
     --done-line: #9BA89B;
@@ -235,6 +237,7 @@
   td.slot-label.sl-matin { background: #C17A14; color: white; }
   td.slot-label.sl-repas { background: #2A6749; color: white; }
   td.slot-label.sl-aprem { background: #2555A0; color: white; }
+  td.slot-label.sl-veillee { background: #5B3F96; color: white; }
 
   td.cell {
     vertical-align: top;
@@ -245,6 +248,7 @@
   tr.row-matin td.cell { background: var(--matin-bg); border-color: var(--matin-bd); }
   tr.row-repas td.cell { background: var(--repas-bg); border-color: var(--repas-bd); text-align:center; vertical-align:middle; }
   tr.row-aprem td.cell { background: var(--aprem-bg); border-color: var(--aprem-bd); }
+  tr.row-veillee td.cell { background: var(--veil-bg); border-color: var(--veil-bd); }
 
   .repas-content {
     font-size: 7.5pt;
@@ -320,6 +324,57 @@
   }
   tr.row-matin li.task .chk { border-color: #C08A2A; }
   tr.row-aprem li.task .chk { border-color: #4070B0; }
+  tr.row-veillee li.task .chk { border-color: #7A5FB5; }
+
+  /* Drag & drop (edit mode) */
+  body.edit-mode ul.tasks { min-height: 18px; }
+  .drag-ghost { opacity: 0.35; }
+  .drag-chosen { box-shadow: 0 3px 10px rgba(0,0,0,0.18); background: #fff !important; }
+
+  /* Fiche du module */
+  li.task .task-info {
+    border: 0; background: transparent; color: #8899AA; font-size: 12px; font-weight: 900;
+    padding: 0 3px; margin-left: 2px; cursor: pointer; line-height: 1; align-self: center;
+  }
+  li.task .task-info:hover { color: var(--navy); }
+  .task-badges { display: inline-flex; gap: 3px; align-items: center; margin-left: 4px; vertical-align: middle; }
+  .badge-status { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .badge-status.st-a_preparer { background: #D33; }
+  .badge-status.st-en_cours { background: #E0A12A; }
+  .badge-status.st-pret { background: #2A9D5B; }
+  .badge-who, .badge-dur { font-size: 6.3pt; background: rgba(27,58,92,0.08); color: #3A4B5C; border-radius: 3px; padding: 0 3px; }
+  #details-modal .modal-card { max-width: 640px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
+  #details-modal textarea { min-height: 60px; resize: vertical; }
+  #details-modal textarea#det-deroule { min-height: 120px; }
+  .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+  .details-where { color: #667; font-size: 12px; margin: -6px 0 10px; }
+  .details-meta { color: #889; font-size: 11px; margin-top: 4px; }
+  #det-fiche { white-space: pre-wrap; font-size: 11px; color: #445; background: #F7F9FC; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow: auto; }
+  @media (max-width: 600px) { .details-grid { grid-template-columns: 1fr; } }
+
+  /* Invitations */
+  .invite-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+  .invite-row input { width: 100%; font-size: 11px; padding: 6px; border: 1px solid var(--border); border-radius: 6px; }
+  .invite-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .invite-actions .modal-btn { padding: 6px 10px; text-decoration: none; font-size: 12px; }
+  .modal-btn.whatsapp { background: #25D366; color: white; }
+  .invite-meta, .invite-empty { font-size: 11px; color: #778; margin-top: 4px; }
+  .invite-joined { font-size: 12px; margin-top: 8px; }
+
+  /* Versions */
+  .history-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #EEE; font-size: 12px; }
+  .history-row .modal-btn { margin-left: auto; padding: 4px 10px; }
+  .history-src { font-weight: 800; font-size: 10px; padding: 2px 6px; border-radius: 4px; color: white; }
+  .history-src.anima { background: #E07B2A; }
+  .history-src.netlify { background: #1B3A5C; }
+  #history-list { max-height: 30vh; overflow: auto; }
+  #history-detail h4 { margin: 12px 0 6px; font-size: 13px; }
+  .history-cells { max-height: 35vh; overflow: auto; font-size: 11px; }
+  .history-cell { margin-bottom: 6px; }
+  .history-cell ul { margin: 2px 0 0; padding-left: 16px; }
+  .sync-steps { font-size: 12.5px; line-height: 1.5; padding-left: 18px; }
+  .sync-bookmarklet { display: inline-block; padding: 8px 14px; border-radius: 8px; background: #E07B2A; color: white !important; font-weight: 800; text-decoration: none; cursor: grab; }
+  #anima-sync-code { width: 100%; font-family: monospace; font-size: 10px; height: 60px; }
   li.task.done .chk { background: var(--done-clr); border-color: var(--done-clr); }
   li.task.done .chk::after { content:'✓'; font-size:7px; color:white; line-height:1; font-weight:900; }
 
@@ -358,6 +413,7 @@
   .ld-matin { background: var(--matin-bg); border: 1.5px solid var(--matin-bd); }
   .ld-repas { background: var(--repas-bg); border: 1.5px solid var(--repas-bd); }
   .ld-aprem { background: var(--aprem-bg); border: 1.5px solid var(--aprem-bd); }
+  .ld-veillee { background: var(--veil-bg); border: 1.5px solid var(--veil-bd); }
   .ld-done  { background: var(--done-bg);  border: 1.5px solid var(--done-clr); }
   .legend-tip { margin-left:auto; color:#999; font-style:italic; font-size:6.5pt; }
 
@@ -963,6 +1019,137 @@
 </div>
 
 <!-- ═══ EDIT TASK MODAL ══════════════════════════════════════════ -->
+<div class="modal-backdrop hidden" id="invite-modal">
+  <div class="modal-card">
+    <h3>📨 Inviter l'équipe</h3>
+    <p style="font-size:12px;color:#556;margin:0 0 10px">Envoie ce lien (WhatsApp, mail…). Chaque personne choisit son identifiant et son mot de passe et peut ensuite modifier ce planning et remplir les fiches (rôle formateur). Lien valable 14 jours, pour plusieurs personnes.</p>
+    <div id="invite-list"></div>
+    <div class="modal-error" id="invite-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="createInviteLink()">Nouveau lien</button>
+      <button class="modal-btn primary" type="button" onclick="closeInviteModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="join-modal">
+  <div class="modal-card">
+    <h3 id="join-title">Invitation</h3>
+    <p id="join-intro" style="font-size:13px;color:#445"></p>
+    <form id="join-form" style="display:none" onsubmit="submitJoin(event)">
+      <div class="modal-field">
+        <label for="join-user">Choisis un identifiant</label>
+        <input id="join-user" autocomplete="username" placeholder="ex. Elena" required>
+      </div>
+      <div class="modal-field">
+        <label for="join-password">Mot de passe (6 caractères minimum)</label>
+        <input id="join-password" type="password" autocomplete="new-password" required minlength="6">
+      </div>
+      <div class="modal-field">
+        <label for="join-password2">Confirme le mot de passe</label>
+        <input id="join-password2" type="password" autocomplete="new-password" required minlength="6">
+      </div>
+      <p style="font-size:11px;color:#889">Tu as déjà un compte ? Mets ton identifiant et ton mot de passe habituels.</p>
+    </form>
+    <div id="join-logged" style="display:none;font-size:13px">Tu es connecté(e) en tant que <b id="join-logged-name"></b>.</div>
+    <div class="modal-error" id="join-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeJoinModal()">Plus tard</button>
+      <button class="modal-btn primary" type="button" id="join-submit" onclick="submitJoin()">Rejoindre</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="details-modal">
+  <div class="modal-card">
+    <h3 id="details-title">Fiche du module</h3>
+    <div class="details-where" id="details-where"></div>
+    <div class="details-grid">
+      <div class="modal-field team-only">
+        <label for="det-formateurs">Formateur(s)</label>
+        <input id="det-formateurs" list="det-formateurs-list" placeholder="ex. Elena, Claire" autocomplete="off">
+        <datalist id="det-formateurs-list"></datalist>
+      </div>
+      <div class="modal-field team-only">
+        <label for="det-statut">Préparation</label>
+        <select id="det-statut">
+          <option value="">Non renseigné</option>
+          <option value="a_preparer">À préparer</option>
+          <option value="en_cours">En cours</option>
+          <option value="pret">Prêt</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label for="det-duree">Durée</label>
+        <input id="det-duree" placeholder="ex. 1h30">
+      </div>
+    </div>
+    <div class="modal-field">
+      <label for="det-resume">Pour les stagiaires (visible sur le lien de partage)</label>
+      <textarea id="det-resume" placeholder="Ce que les stagiaires vont faire / retenir"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-objectifs">Objectifs</label>
+      <textarea id="det-objectifs"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-deroule">Déroulé</label>
+      <textarea id="det-deroule" placeholder="Accroche, apports, mise en pratique, bilan…"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-materiel">Matériel</label>
+      <textarea id="det-materiel"></textarea>
+    </div>
+    <div class="modal-field team-only">
+      <label for="det-notes">Notes de l'équipe</label>
+      <textarea id="det-notes"></textarea>
+    </div>
+    <div class="modal-field" id="det-fiche-wrap">
+      <label>Fiche Anima</label>
+      <div id="det-fiche"></div>
+    </div>
+    <div class="details-meta" id="details-meta"></div>
+    <div class="modal-error" id="details-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeDetailsModal()">Fermer</button>
+      <button class="modal-btn primary" type="button" id="details-save" onclick="saveDetails()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="anima-sync-modal">
+  <div class="modal-card">
+    <h3>🔄 Synchro avec Anima</h3>
+    <div id="anima-sync-link-wrap" style="display:none">
+      <ol class="sync-steps">
+        <li><b>Ordinateur :</b> fais glisser ce bouton dans ta barre de favoris :<br>
+          <a id="anima-sync-link" class="sync-bookmarklet" href="#" onclick="event.preventDefault(); showToast('Fais-le glisser dans la barre de favoris');">🔄 Synchro</a></li>
+        <li>Sur Anima, ouvre le stage puis l'onglet <b>« Planning du stage »</b>.</li>
+        <li>Clique sur le favori : un panneau compare les deux plannings et propose <b>Anima → planning-bafa</b> ou <b>planning-bafa → Anima</b>. Une copie est enregistrée avant chaque synchro (bouton 🕘).</li>
+      </ol>
+      <p style="font-size:12px;color:#666">iPhone / iPad : crée un favori de n'importe quelle page, puis modifie son adresse et colle ce code à la place :</p>
+      <textarea id="anima-sync-code" readonly></textarea>
+      <p style="font-size:11px;color:#888">Ce favori donne accès à ce planning uniquement, pendant <span id="anima-sync-expiry"></span>. Ne le partage pas.</p>
+    </div>
+    <div class="modal-error" id="anima-sync-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="copyAnimaSyncCode()">Copier le code</button>
+      <button class="modal-btn primary" type="button" onclick="closeAnimaSyncModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="history-modal">
+  <div class="modal-card">
+    <h3>🕘 Versions enregistrées</h3>
+    <div id="history-list"></div>
+    <div id="history-detail"></div>
+    <div class="modal-actions">
+      <button class="modal-btn primary" type="button" onclick="closeHistoryModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="edit-modal">
   <div class="modal-card">
     <h3 id="edit-modal-title">Modifier la tâche</h3>
@@ -1004,6 +1191,9 @@
         <button type="button" id="btn-new-planning" title="Nouveau planning" onclick="createPlanningPrompt()">＋</button>
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
+        <button type="button" id="btn-invite" title="Inviter l'équipe (lien)" onclick="openInviteModal()">📨</button>
+        <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
+        <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
       </div>
       <div class="sync-badge" id="sync-badge">
@@ -1046,6 +1236,7 @@
     <span class="legend-item"><span class="ld ld-matin"></span> Matin</span>
     <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
     <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
+    <span class="legend-item"><span class="ld ld-veillee"></span> Veillée</span>
     <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
     <span class="legend-tip" id="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
   </div>
@@ -1054,6 +1245,7 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="app.js"></script>
 </body>
 </html>

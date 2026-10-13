@@ -2,6 +2,10 @@ import { getStore } from "@netlify/blobs";
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from "node:crypto";
 
 const TOKEN_TTL_SEC = 7 * 24 * 3600; // 7 days
+// Sync tokens are embedded in the "Synchro Anima" bookmarklet.  They are
+// bound to one planning and only accepted by /api/state, so a leaked token
+// cannot be used to manage users or other plannings.
+export const SYNC_TOKEN_TTL_SEC = 180 * 24 * 3600; // ~6 months
 const COOKIE_NAME = "planning_auth";
 
 function getSecret() {
@@ -41,8 +45,8 @@ export function verifyPassword(password, stored) {
   }
 }
 
-export function signToken(payload) {
-  const body = { ...payload, exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC };
+export function signToken(payload, ttlSec = TOKEN_TTL_SEC) {
+  const body = { ...payload, exp: Math.floor(Date.now() / 1000) + ttlSec };
   const bodyEnc = b64urlEncode(JSON.stringify(body));
   const sig = createHmac("sha256", getSecret()).update(bodyEnc).digest();
   return `${bodyEnc}.${b64urlEncode(sig)}`;
@@ -68,7 +72,13 @@ export function verifyToken(token) {
   let role = payload.role;
   if (role === "editor") role = "directeur";
   else if (role === "validator") role = "formateur";
-  return { user: payload.user, role, exp: payload.exp };
+  const out = { user: payload.user, role, exp: payload.exp };
+  if (payload.scope === "sync") {
+    if (typeof payload.planningId !== "string" || !payload.planningId) return null;
+    out.scope = "sync";
+    out.planningId = payload.planningId;
+  }
+  return out;
 }
 
 export function buildAuthCookie(token) {
@@ -80,6 +90,9 @@ export function buildClearCookie() {
 }
 
 export function extractTokenFromRequest(req) {
+  const authz = req.headers.get("authorization") || "";
+  const m = /^Bearer\s+(\S+)$/i.exec(authz);
+  if (m) return m[1];
   const cookieHeader = req.headers.get("cookie") || "";
   for (const part of cookieHeader.split(/;\s*/)) {
     const eq = part.indexOf("=");
@@ -465,10 +478,12 @@ export async function getUser(user) {
   };
 }
 
-export function requireAuth(req, { role } = {}) {
+export function requireAuth(req, { role, allowSync = false } = {}) {
   const token = extractTokenFromRequest(req);
   const payload = verifyToken(token);
-  if (!payload) {
+  // Sync-scoped tokens are only valid on endpoints that explicitly opt in
+  // (and those endpoints must check payload.planningId themselves).
+  if (!payload || (payload.scope === "sync" && !allowSync)) {
     return { error: new Response(JSON.stringify({ error: "Non authentifié" }), {
       status: 401,
       headers: { "Content-Type": "application/json" },
