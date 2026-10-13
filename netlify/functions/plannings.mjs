@@ -65,7 +65,7 @@ export default async (req) => {
       const meta = await getPlanningMeta(planningId);
       if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
 
-      // GET /api/plannings/:id/members — who has access (any member can see
+      // GET /api/plannings/:id/members: who has access (any member can see
       // the team; the owner manages it from the "Équipe" modal).
       if (req.method === "GET" && pathParts[3] === "members") {
         const hasAccess = await userHasAccess(actor.user, planningId);
