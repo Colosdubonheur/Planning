@@ -1,4 +1,4 @@
-import { requireAuth } from "./_lib/auth.mjs";
+import { requireAuth, loadUsers, getUsersStore } from "./_lib/auth.mjs";
 import {
   ensureMigration,
   listPlanningsForUser,
@@ -65,6 +65,26 @@ export default async (req) => {
       const meta = await getPlanningMeta(planningId);
       if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
 
+      // GET /api/plannings/:id/members — who has access (any member can see
+      // the team; the owner manages it from the "Équipe" modal).
+      if (req.method === "GET" && pathParts[3] === "members") {
+        const hasAccess = await userHasAccess(actor.user, planningId);
+        if (!hasAccess) return json({ error: "Permission refusée" }, { status: 403 });
+        const users = await loadUsers(getUsersStore());
+        const members = Object.entries(users)
+          .filter(([, rec]) => rec && Array.isArray(rec.plannings) && rec.plannings.includes(planningId))
+          .map(([name, rec]) => ({
+            user: name,
+            role: rec.role,
+            invitedBy: rec.parent || null,
+            allPlannings: rec.autoAssign === true,
+            isOwner: meta.ownerId === name,
+            createdAt: rec.createdAt || 0,
+          }))
+          .sort((a, b) => (b.isOwner - a.isOwner) || (a.createdAt - b.createdAt));
+        return json({ members, ownerId: meta.ownerId });
+      }
+
       // GET /api/plannings/:id — metadata
       if (req.method === "GET") {
         const hasAccess = await userHasAccess(actor.user, planningId);
@@ -95,4 +115,4 @@ export default async (req) => {
   return json({ error: "Not found" }, { status: 404 });
 };
 
-export const config = { path: ["/api/plannings", "/api/plannings/:id"] };
+export const config = { path: ["/api/plannings", "/api/plannings/:id", "/api/plannings/:id/members"] };
