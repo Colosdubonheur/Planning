@@ -87,7 +87,13 @@
     return out;
   }
 
-  function netlifyModel(state) {
+  // A planning-bafa block linked to several Anima modules (animaIds) is
+  // expanded into those modules, the way it will be written to Anima.
+  function blockIds(t) {
+    return Array.isArray(t.animaIds) && t.animaIds.length > 1 ? t.animaIds : null;
+  }
+
+  function netlifyModel(state, pm) {
     const out = {};
     for (const d of state.days) {
       for (const s of state.slots) {
@@ -95,7 +101,29 @@
         out[d.id + '|' + s.id] = state.tasks
           .filter((t) => t.dayId === d.id && t.slotId === s.id)
           .sort((a, b) => (a.order || 0) - (b.order || 0))
-          .map((t) => ({ text: t.text, animaId: t.animaId || null }));
+          .flatMap((t) => {
+            const ids = blockIds(t);
+            if (ids) return ids.map((id) => ({ text: titleFor(pm, id), animaId: id }));
+            return [{ text: t.text, animaId: t.animaId || null }];
+          });
+      }
+    }
+    return out;
+  }
+
+  // Inverse of the expansion above: when the Anima cell holds the modules of
+  // a known block, consecutively and in the same order, they come back to
+  // planning-bafa as that single block (which keeps its details).
+  function collapseBlocks(items, state) {
+    const blocks = state.tasks.map((t) => ({ t, ids: blockIds(t) })).filter((b) => b.ids);
+    const out = [];
+    for (let i = 0; i < items.length; i++) {
+      const b = blocks.find((bl) => bl.ids.every((id, k) => items[i + k] && items[i + k].animaId === id));
+      if (b) {
+        out.push({ text: b.t.text, animaId: b.ids[0], animaIds: b.ids.slice(), block: true });
+        i += b.ids.length - 1;
+      } else {
+        out.push(items[i]);
       }
     }
     return out;
@@ -203,7 +231,11 @@
     const tasks = [];
     for (const d of state.days) {
       for (const s of ['matin', 'aprem', 'veillee']) {
-        for (const it of a[d.id + '|' + s] || []) {
+        for (const it of collapseBlocks(a[d.id + '|' + s] || [], state)) {
+          if (it.block) {
+            tasks.push({ dayId: d.id, slotId: s, text: it.text.slice(0, 300), animaId: it.animaId, animaIds: it.animaIds });
+            continue;
+          }
           const fiche = ficheFor(pm, it.animaId);
           tasks.push(Object.assign(
             { dayId: d.id, slotId: s, text: it.text.slice(0, 300), animaId: it.animaId },
@@ -231,6 +263,12 @@
         if (id && !existing[id]) existing[id] = typeof e === 'string' ? { type: 'temps', id: e } : e;
       }
     }
+    const entryFor = (id) => {
+      if (existing[id]) return existing[id];
+      const g = /^groupe:([^:]*):(.*)$/.exec(id);
+      if (g) return { type: 'groupe', typeProjet: g[1], nomGroupe: g[2] };
+      return { type: 'temps', id };
+    };
     const netDays = new Set(state.days.map((d) => d.id));
     const next = {};
     const relinked = [];
@@ -241,10 +279,12 @@
       next[key] = state.tasks
         .filter((t) => t.dayId === m[1] && t.slotId === slotId)
         .sort((x, y) => (x.order || 0) - (y.order || 0))
-        .map((t) => {
+        .flatMap((t) => {
+          const ids = blockIds(t);
+          if (ids) return ids.map(entryFor);
           let id = t.animaId || byTitle[norm(t.text)] || t.text;
           if (!t.animaId && id !== t.text) relinked.push(t.text);
-          return existing[id] || { type: 'temps', id };
+          return [entryFor(id)];
         });
     }
     for (const k of Object.keys(pm._pmJours)) {
@@ -303,7 +343,7 @@
       return;
     }
     const netDays = new Set(state.days.map((d) => d.id));
-    const cells = diffCells(animaModel(pm), netlifyModel(state), netDays);
+    const cells = diffCells(animaModel(pm), netlifyModel(state, pm), netDays);
     const unsaved = pm._pmDirty ? '<p style="background:#FFF4D6;padding:6px 8px;border-radius:6px">⚠️ Des modifications Anima ne sont pas encore sauvegardées. Elles seront prises en compte par « Anima → planning-bafa ».</p>' : '';
     const btn = 'border:0;border-radius:8px;padding:8px 12px;font-weight:700;cursor:pointer;margin:4px 6px 0 0;';
     let html = '<div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:15px">🔄 Synchro Anima ↔ planning-bafa</b>'
