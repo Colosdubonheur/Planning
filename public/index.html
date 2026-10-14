@@ -352,6 +352,65 @@
   #det-fiche { white-space: pre-wrap; font-size: 11px; color: #445; background: #F7F9FC; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; max-height: 160px; overflow: auto; }
   @media (max-width: 600px) { .details-grid { grid-template-columns: 1fr; } }
 
+
+  /* ── DAY VIEW (phones) ─────────────────────────────────────── */
+  .day-view { display: none; }
+  .dv-tabs { position: sticky; top: 0; z-index: 6; display: flex; gap: 6px; overflow-x: auto; padding: 8px; background: #fff; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  .dv-tabs::-webkit-scrollbar { display: none; }
+  .dv-tab { flex: 0 0 auto; min-width: 58px; border: 1px solid var(--border); border-radius: 12px; padding: 6px 8px; background: #fff; color: var(--navy); font-family: inherit; line-height: 1.15; text-align: center; cursor: pointer; position: relative; }
+  .dv-tab b { display: block; font-size: 12pt; }
+  .dv-tab small { display: block; font-size: 8pt; color: #667; }
+  .dv-tab.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+  .dv-tab.active small { color: #D6E2F0; }
+  .dv-tab.today::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: #E07B2A; }
+  .dv-title { font-weight: 800; color: var(--navy); font-size: 12pt; padding: 12px 12px 2px; }
+  .dv-slot { padding: 10px 10px 2px; }
+  .dv-slot h3 { margin: 0 0 8px; font-size: 9.5pt; text-transform: uppercase; letter-spacing: .06em; }
+  .dv-slot.sl-matin h3 { color: #B57800; }
+  .dv-slot.sl-aprem h3 { color: #2F5E9E; }
+  .dv-slot.sl-veillee h3 { color: #6A4FA5; }
+  .day-view li.task { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px 8px 12px 4px; margin-bottom: 8px; align-items: center; gap: 8px; box-shadow: 0 1px 2px rgba(20,40,70,.06); }
+  .day-view li.task.done { background: var(--done-bg); }
+  .day-view .chk { width: 26px; height: 26px; min-width: 26px; border-radius: 7px; border-width: 2px; margin: 0 2px 0 6px; }
+  .day-view li.task.done .chk::after { font-size: 16px; }
+  .dv-slot.sl-matin .chk { border-color: #C08A2A; }
+  .dv-slot.sl-aprem .chk { border-color: #4070B0; }
+  .dv-slot.sl-veillee .chk { border-color: #7A5FB5; }
+  .day-view .task-text { font-size: 11.5pt; line-height: 1.35; }
+  .dv-time { display: block; font-size: 9pt; font-weight: 800; color: #5A6B80; margin-bottom: 2px; }
+  .dv-go { font-size: 22px; color: #9AA6B5; padding: 0 4px; }
+  .dv-repas { margin: 6px 10px; padding: 8px; text-align: center; background: #F4F1EA; border-radius: 10px; color: #7A6A4A; font-size: 10pt; }
+  .dv-nav { display: flex; justify-content: space-between; gap: 8px; padding: 12px 10px 16px; }
+  .dv-nav button { border: 1px solid var(--border); background: #fff; color: var(--navy); border-radius: 10px; padding: 10px 12px; font-family: inherit; font-weight: 700; font-size: 10pt; }
+  .day-view .btn-add-task { margin: 0 0 8px; }
+  @media (max-width: 720px) {
+    .table-scroll { display: none; }
+    .day-view { display: block; }
+    .legend { display: none; }
+  }
+
+  /* ── FICHE (lecture) ───────────────────────────────────────── */
+  .details-read, .day-view { -webkit-tap-highlight-color: transparent; }
+  .details-read { font-size: 10.5pt; line-height: 1.5; color: #1A2B3A; }
+  .dr-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .dr-chip { background: #EEF3F9; color: var(--navy); border-radius: 999px; padding: 4px 10px; font-size: 9pt; font-weight: 700; }
+  .dr-chip.time { background: #FFF1DF; color: #A85A00; }
+  .dr-sec { border-top: 1px solid #EEF1F5; padding: 10px 0 6px; }
+  .dr-sec h4 { margin: 0 0 4px; font-size: 9pt; text-transform: uppercase; letter-spacing: .06em; color: #E07B2A; }
+  .dr-body { white-space: pre-wrap; word-break: break-word; }
+  .dr-body a { color: #2F5E9E; font-weight: 600; }
+  .dr-sec details summary { cursor: pointer; font-size: 9pt; text-transform: uppercase; letter-spacing: .06em; color: #E07B2A; font-weight: 800; }
+  .dr-empty { color: #778; font-style: italic; padding: 8px 0; }
+  #details-modal.reading #details-form, #details-modal.reading #details-save { display: none !important; }
+  #details-modal.editing #details-read, #details-modal.editing #details-edit { display: none !important; }
+  @media (max-width: 720px) {
+    #details-modal { align-items: stretch; padding: 0; }
+    #details-modal .modal-card { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; padding: 14px 14px 0; display: flex; flex-direction: column; }
+    #details-modal .modal-actions { position: sticky; bottom: 0; background: #fff; margin: auto -14px 0; padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); }
+    #details-modal .modal-actions .modal-btn { flex: 1; padding: 12px; font-size: 11pt; }
+    #details-title { font-size: 14pt; }
+  }
+
   /* Équipe */
   .team-card { max-width: 560px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
   .team-sub { color: #667; font-size: 12px; margin: -6px 0 12px; }
@@ -1111,6 +1170,8 @@
   <div class="modal-card">
     <h3 id="details-title">Fiche du module</h3>
     <div class="details-where" id="details-where"></div>
+    <div class="details-read" id="details-read"></div>
+    <div id="details-form">
     <div class="details-grid">
       <div class="modal-field team-only">
         <label for="det-formateurs">Formateur(s)</label>
@@ -1155,10 +1216,12 @@
       <label>Fiche Anima</label>
       <div id="det-fiche"></div>
     </div>
+    </div>
     <div class="details-meta" id="details-meta"></div>
     <div class="modal-error" id="details-error"></div>
     <div class="modal-actions">
       <button class="modal-btn ghost" type="button" onclick="closeDetailsModal()">Fermer</button>
+      <button class="modal-btn" type="button" id="details-edit" onclick="setDetailsMode('edit')">✏️ Modifier</button>
       <button class="modal-btn primary" type="button" id="details-save" onclick="saveDetails()">Enregistrer</button>
     </div>
   </div>
@@ -1276,6 +1339,9 @@
     <table id="planning-table"></table>
   </div>
 
+  <!-- DAY VIEW (phones) -->
+  <div class="day-view" id="day-view"></div>
+
   <!-- LEGEND -->
   <div class="legend no-print">
     <span class="legend-title">Légende :</span>
@@ -1284,7 +1350,7 @@
     <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
     <span class="legend-item"><span class="ld ld-veillee"></span> Veillée</span>
     <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
-    <span class="legend-tip" id="legend-tip">💡 Cliquez sur un item pour le cocher — synchronisé en temps réel</span>
+    <span class="legend-tip" id="legend-tip">💡 Cliquez sur un temps pour ouvrir sa fiche, sur la case pour le cocher. Synchronisé en temps réel</span>
   </div>
 
 </div>

@@ -732,10 +732,122 @@ function renderPlanning() {
   html += '</tbody>';
   table.innerHTML = html;
 
+  renderDayView();
   updateProgress();
   lastVersion = currentState.version || 0;
   initDragAndDrop();
   refreshDetailsModal();
+}
+
+// ── MOBILE DAY VIEW ────────────────────────────────────────────
+// On a phone the 8-column table is unreadable: one day at a time, with
+// day tabs, big tap targets and the advised time of each module.
+const MOBILE_MQ = window.matchMedia('(max-width: 720px)');
+let dayViewDayId = null;
+const DV_SLOT_ICON = { matin: '☀️', aprem: '🌤', veillee: '🌙' };
+
+function horaireOf(t) {
+  const m = /Horaire conseillé : ([^\n(,]+)/.exec((t.details && t.details.deroule) || '');
+  return m ? m[1].trim() : '';
+}
+
+function dayStorageKey() { return 'pb-day-' + (currentPlanningId || ''); }
+
+function defaultDayId() {
+  const days = currentState.days;
+  try {
+    const saved = localStorage.getItem(dayStorageKey());
+    if (saved && days.some((d) => d.id === saved)) return saved;
+  } catch {}
+  const start = currentState.startDate || inferStartDateFromState(currentState);
+  if (start) {
+    const i = Math.round((new Date(todayIso() + 'T12:00:00') - new Date(start + 'T12:00:00')) / 86400000);
+    if (i >= 0 && i < days.length) return days[i].id;
+  }
+  return days[0] && days[0].id;
+}
+
+function todayDayId() {
+  const start = currentState.startDate || inferStartDateFromState(currentState);
+  if (!start) return null;
+  const i = Math.round((new Date(todayIso() + 'T12:00:00') - new Date(start + 'T12:00:00')) / 86400000);
+  return currentState.days[i] ? currentState.days[i].id : null;
+}
+
+function setDayViewDay(id) {
+  dayViewDayId = id;
+  try { localStorage.setItem(dayStorageKey(), id); } catch {}
+  renderDayView();
+  const dv = $('day-view');
+  if (dv) window.scrollTo({ top: Math.max(0, dv.getBoundingClientRect().top + window.scrollY - 4) });
+}
+
+function renderDayView() {
+  const dv = $('day-view');
+  if (!dv) return;
+  if (!currentState || !currentState.days.length) { dv.innerHTML = ''; return; }
+  const { days, slots, tasks } = currentState;
+  if (!days.some((d) => d.id === dayViewDayId)) dayViewDayId = defaultDayId();
+  const today = todayDayId();
+  const isEditor = canEditContent();
+  let html = '<div class="dv-tabs" role="tablist">';
+  for (const d of days) {
+    const cls = (d.id === dayViewDayId ? ' active' : '') + (d.id === today ? ' today' : '');
+    html += `<button type="button" class="dv-tab${cls}" data-dv-day="${escapeHtml(d.id)}" role="tab">
+      <small>${escapeHtml(d.short || '')}</small><b>${escapeHtml((d.name || '').slice(0, 3))}</b><small>${escapeHtml(d.date || '')}</small></button>`;
+  }
+  html += '</div><div class="dv-day">';
+  const day = days.find((d) => d.id === dayViewDayId);
+  html += `<div class="dv-title">${escapeHtml(day.short || '')} · ${escapeHtml(day.name || '')} ${escapeHtml(day.date || '')}</div>`;
+  for (const slot of slots) {
+    if (slot.id === 'repas') { html += '<div class="dv-repas">🍽 Repas</div>'; continue; }
+    const list = tasks.filter((t) => t.dayId === day.id && t.slotId === slot.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (!list.length && !(isEditor && editMode)) continue;
+    html += `<section class="dv-slot sl-${escapeHtml(slot.id)}"><h3>${DV_SLOT_ICON[slot.id] || ''} ${escapeHtml(slot.label)}</h3><ul class="tasks">`;
+    for (const t of list) {
+      const h = horaireOf(t);
+      html += `<li class="task${t.done ? ' done' : ''}" data-task-id="${escapeHtml(t.id)}">
+        <span class="chk" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" aria-label="Fait"></span>
+        <span class="task-text">${h ? `<span class="dv-time">${escapeHtml(h)}</span>` : ''}${escapeHtml(t.text)}${taskBadges(t)}</span>
+        ${showDetailsButton(t) ? '<span class="dv-go" aria-hidden="true">›</span>' : ''}
+      </li>`;
+    }
+    html += '</ul>';
+    if (isEditor) html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(day.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
+    html += '</section>';
+  }
+  const idx = days.findIndex((d) => d.id === day.id);
+  html += '<div class="dv-nav">'
+    + (idx > 0 ? `<button type="button" data-dv-day="${escapeHtml(days[idx - 1].id)}">‹ ${escapeHtml(days[idx - 1].short)} ${escapeHtml(days[idx - 1].name)}</button>` : '<span></span>')
+    + (idx < days.length - 1 ? `<button type="button" data-dv-day="${escapeHtml(days[idx + 1].id)}">${escapeHtml(days[idx + 1].short)} ${escapeHtml(days[idx + 1].name)} ›</button>` : '<span></span>')
+    + '</div></div>';
+  dv.innerHTML = html;
+  const active = dv.querySelector('.dv-tab.active');
+  if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+}
+
+function onDayViewClick(e) {
+  const tab = e.target.closest('[data-dv-day]');
+  if (tab) { setDayViewDay(tab.dataset.dvDay); return; }
+  onTableClick(e);
+}
+
+// Swipe left / right on the day to change day.
+let dvTouch = null;
+function onDayViewTouchStart(e) {
+  if (e.target.closest('.dv-tabs')) { dvTouch = null; return; }
+  const t = e.changedTouches[0];
+  dvTouch = { x: t.clientX, y: t.clientY };
+}
+function onDayViewTouchEnd(e) {
+  if (!dvTouch || !currentState) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - dvTouch.x, dy = t.clientY - dvTouch.y;
+  dvTouch = null;
+  if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+  const days = currentState.days;
+  const i = days.findIndex((d) => d.id === dayViewDayId) + (dx < 0 ? 1 : -1);
+  if (days[i]) setDayViewDay(days[i].id);
 }
 
 // ── DRAG & DROP (edit mode) ────────────────────────────────────
@@ -804,9 +916,14 @@ function onTableClick(e) {
   if (editMode && canEditContent()) {
     e.stopPropagation();
     openTaskMenu(taskId, li);
-  } else {
-    toggleTask(taskId, li);
+    return;
   }
+  // The box ticks the module; the rest of the line opens its fiche (when
+  // there is one to read), which is what people want on a phone.
+  if (e.target.closest('.chk')) { toggleTask(taskId, li); return; }
+  const t = currentState && currentState.tasks.find((x) => x.id === taskId);
+  if (t && showDetailsButton(t)) { openDetailsModal(taskId); return; }
+  if (currentUser) toggleTask(taskId, li);
 }
 
 // ── OPS ────────────────────────────────────────────────────────
@@ -1503,6 +1620,12 @@ async function startPublic() {
 async function init() {
   const table = $('planning-table');
   table.addEventListener('click', onTableClick);
+  const dv = $('day-view');
+  if (dv) {
+    dv.addEventListener('click', onDayViewClick);
+    dv.addEventListener('touchstart', onDayViewTouchStart, { passive: true });
+    dv.addEventListener('touchend', onDayViewTouchEnd, { passive: true });
+  }
 
   $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1833,9 +1956,54 @@ function openDetailsModal(taskId) {
   $('det-fiche-wrap').style.display = editable && fiche ? '' : 'none';
   $('det-fiche').textContent = fiche;
   $('details-save').style.display = editable ? '' : 'none';
+  $('details-edit').style.display = editable ? '' : 'none';
   $('details-error').textContent = '';
   updateDetailsMeta(t);
+  renderDetailsRead(t);
+  setDetailsMode('read');
   $('details-modal').classList.remove('hidden');
+  const card = $('details-modal').querySelector('.modal-card');
+  if (card) card.scrollTop = 0;
+}
+
+// Read view of a fiche: formatted text and clickable links, which is what a
+// formateur needs on a phone.  "Modifier" switches to the form.
+function setDetailsMode(mode) {
+  const m = $('details-modal');
+  m.classList.toggle('reading', mode !== 'edit');
+  m.classList.toggle('editing', mode === 'edit');
+}
+
+function richText(s) {
+  return String(s || '').split('\n').map((line) => {
+    const ln = /^(\s*[•\-]\s*)(.+?)\s:\s(https?:\/\/\S+)\s*$/.exec(line);
+    if (ln) return escapeHtml(ln[1]) + `<a href="${escapeHtml(ln[3])}" target="_blank" rel="noopener">${escapeHtml(ln[2])}</a>`;
+    return escapeHtml(line).replace(/(https?:\/\/[^\s<]+)/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u.length > 40 ? u.slice(0, 40) + '…' : u}</a>`);
+  }).join('\n');
+}
+
+function renderDetailsRead(t) {
+  const d = t.details || {};
+  const chips = [];
+  const h = horaireOf(t);
+  if (h) chips.push(`<span class="dr-chip time">🕘 ${escapeHtml(h)}</span>`);
+  if (d.duree) chips.push(`<span class="dr-chip">⏱ ${escapeHtml(d.duree)}</span>`);
+  if (Array.isArray(d.formateurs) && d.formateurs.length) chips.push(`<span class="dr-chip">👤 ${escapeHtml(d.formateurs.join(', '))}</span>`);
+  if (d.statut) chips.push(`<span class="dr-chip">${escapeHtml(STATUS_LABELS[d.statut] || d.statut)}</span>`);
+  const deroule = String(d.deroule || '').replace(/^Horaire conseillé : [^\n]*\n*/, '').replace(/^Déroulé :\s*\n/, '');
+  const materiel = String(d.materiel || '').replace(/^Ressources Anima :\s*\n/, '');
+  const secs = [
+    ['Pour les stagiaires', d.resume],
+    ['Ce qu\'on présente', d.objectifs],
+    ['Déroulé', deroule],
+    ['Matériel et ressources', materiel],
+    ['Notes de l\'équipe', d.notes],
+  ].filter(([, v]) => v && String(v).trim());
+  let html = chips.length ? `<div class="dr-chips">${chips.join('')}</div>` : '';
+  for (const [title, v] of secs) html += `<div class="dr-sec"><h4>${escapeHtml(title)}</h4><div class="dr-body">${richText(String(v).trim())}</div></div>`;
+  if (d.ficheAnima && canEditContent()) html += `<div class="dr-sec"><details><summary>Fiche Anima</summary><div class="dr-body">${richText(d.ficheAnima)}</div></details></div>`;
+  if (!secs.length && !d.ficheAnima) html += '<div class="dr-empty">Pas encore de contenu pour ce temps.</div>';
+  $('details-read').innerHTML = html;
 }
 
 function updateDetailsMeta(t) {
@@ -1877,6 +2045,7 @@ function refreshDetailsModal() {
   }
   $('details-title').textContent = t.text;
   updateDetailsMeta(t);
+  if ($('details-modal').classList.contains('reading')) renderDetailsRead(t);
   if (changedRemotely.length && t.details && t.details.updatedBy !== (currentUser && currentUser.user)) {
     showToast(`Fiche mise à jour par ${t.details.updatedBy}`);
   }
