@@ -101,6 +101,17 @@ function cleanAnimaId(raw) {
   return raw;
 }
 
+// A block of planning-bafa can stand for several Anima modules (e.g. one
+// "Santé" block for 4 catalog entries).  animaIds keeps them in order; the
+// first one is also stored as animaId so older code keeps working.
+const MAX_ANIMA_IDS = 20;
+function cleanAnimaIds(raw) {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.length > MAX_ANIMA_IDS) throw new Error("animaIds invalide");
+  const ids = raw.map((v) => cleanAnimaId(v)).filter(Boolean);
+  return ids.length > 1 ? ids : undefined;
+}
+
 function newTaskId() {
   return `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -149,17 +160,32 @@ function applyOp(state, op, actor) {
       break;
     }
 
+    case "setAnimaIds": {
+      // Link a block to several Anima modules (or back to one / none).
+      const task = state.tasks.find((t) => t.id === op.taskId);
+      if (!task) throw new Error("Tâche introuvable");
+      const ids = Array.isArray(op.animaIds) ? op.animaIds.map((v) => cleanAnimaId(v)).filter(Boolean) : [];
+      if (ids.length > MAX_ANIMA_IDS) throw new Error("animaIds invalide");
+      delete task.animaIds;
+      delete task.animaId;
+      if (ids.length) task.animaId = ids[0];
+      if (ids.length > 1) task.animaIds = ids;
+      break;
+    }
+
     case "add": {
       const { dayId, slotId } = op;
       if (!state.days.some((d) => d.id === dayId)) throw new Error("Jour invalide");
       if (!state.slots.some((s) => s.id === slotId)) throw new Error("Créneau invalide");
       if (slotId === "repas") throw new Error("Le créneau Repas n'est pas éditable");
       const text = cleanText(op.text || "");
-      const animaId = cleanAnimaId(op.animaId);
+      const animaIds = cleanAnimaIds(op.animaIds);
+      const animaId = animaIds ? animaIds[0] : cleanAnimaId(op.animaId);
       const existing = state.tasks.filter((t) => t.dayId === dayId && t.slotId === slotId);
       const order = existing.length;
       const task = { id: newTaskId(), dayId, slotId, order, text, done: false };
       if (animaId) task.animaId = animaId;
+      if (animaIds) task.animaIds = animaIds;
       state.tasks.push(task);
       break;
     }
@@ -241,9 +267,11 @@ function applyOp(state, op, actor) {
         if (!dayIds.has(dayId)) throw new Error(`Jour invalide: ${dayId}`);
         if (!slotIds.has(slotId) || slotId === "repas") throw new Error(`Créneau invalide: ${slotId}`);
         const text = cleanText(raw.text);
-        const animaId = cleanAnimaId(raw.animaId);
+        const animaIds = cleanAnimaIds(raw.animaIds);
+        const animaId = animaIds ? animaIds[0] : cleanAnimaId(raw.animaId);
         const prev =
           (animaId && take((t) => t.animaId === animaId)) ||
+          (animaId && take((t) => Array.isArray(t.animaIds) && t.animaIds.includes(animaId))) ||
           take((t) => t.dayId === dayId && t.slotId === slotId && t.text === text) ||
           take((t) => !t.animaId && t.text === text);
         const key = dayId + "|" + slotId;
@@ -257,6 +285,7 @@ function applyOp(state, op, actor) {
           done: prev ? !!prev.done : false,
         };
         if (animaId) task.animaId = animaId;
+        if (animaIds) task.animaIds = animaIds;
         if (prev && prev.details) task.details = prev.details;
         if (typeof raw.ficheAnima === "string" && raw.ficheAnima.trim()) {
           const fiche = raw.ficheAnima.slice(0, DETAIL_TEXT_FIELDS.ficheAnima);
