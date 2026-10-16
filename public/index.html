@@ -796,6 +796,14 @@
     font-size: 10pt;
     padding: 4px 6px;
   }
+  #batch-modal .modal-card { max-width: 640px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
+  #batch-input { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  #batch-preview h4 { margin: 10px 0 6px; font-size: 14px; }
+  .batch-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #EEE; font-size: 13px; }
+  .batch-row .batch-ico { flex: none; width: 20px; text-align: center; }
+  .batch-row.err { color: #B00020; }
+  .batch-row.done { opacity: 0.55; }
+  .batch-row small { display: block; color: #666; }
   .modal-error {
     color: #D33;
     font-size: 8.5pt;
@@ -1327,6 +1335,23 @@
   </div>
 </div>
 
+<div class="modal-backdrop hidden" id="batch-modal">
+  <div class="modal-card">
+    <h3>📋 Appliquer des modifications</h3>
+    <div class="modal-field" id="batch-input-wrap">
+      <label for="batch-input">Collez ici le bloc de modifications</label>
+      <textarea id="batch-input" rows="6" placeholder='{ "titre": "…", "modifs": [ … ] }'></textarea>
+    </div>
+    <div id="batch-preview"></div>
+    <div class="modal-error" id="batch-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeBatchModal()">Fermer</button>
+      <button class="modal-btn ghost" type="button" id="batch-check" onclick="previewBatch()">Vérifier</button>
+      <button class="modal-btn primary" type="button" id="batch-apply" onclick="applyBatch()" disabled>Appliquer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="edit-modal">
   <div class="modal-card">
     <h3 id="edit-modal-title">Modifier la tâche</h3>
@@ -1382,6 +1407,7 @@
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
         <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
         <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
+        <button type="button" id="btn-batch" title="Appliquer des modifications" onclick="openBatchModal()">📋</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
       </div>
       <div class="sync-badge" id="sync-badge">

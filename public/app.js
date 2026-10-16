@@ -241,6 +241,7 @@ function applyUserUI() {
   $('btn-delete-planning').style.display = owner ? '' : 'none';
   $('btn-anima-sync').style.display = owner ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
+  $('btn-batch').style.display = owner ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -343,6 +344,7 @@ function renderPlanningSelector() {
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
+  $('btn-batch').style.display = canOwn ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -2648,3 +2650,239 @@ function initDocViewer() {
 
 window.closeDocViewer = closeDocViewer;
 window.addEventListener('DOMContentLoaded', () => { initSearch(); initDocViewer(); });
+
+
+// ── Appliquer des modifications ────────────────────────────────────────
+// The owner pastes a block of changes (prepared by Claude, for instance),
+// checks the list of what will change, then applies it.  Each change goes
+// through the normal API with the owner's own session, one op at a time.
+//
+// Format:
+// { "titre": "…", "modifs": [
+//   { "type": "renommer",  "tache": "Titre actuel", "jour": "J1", "titre": "Nouveau titre" },
+//   { "type": "fiche",     "tache": "…", "fiche": { "horaire": "9h50 - 10h45 (55 min)", "objectifs": "…" } },
+//   { "type": "ajouter",   "jour": "J1", "creneau": "aprem", "titre": "…", "apres": "Titre voisin", "fiche": { … } },
+//   { "type": "deplacer",  "tache": "…", "vers": { "jour": "J2", "creneau": "matin", "apres": "…" } },
+//   { "type": "supprimer", "tache": "…" } ] }
+// "tache" is matched on the title (accents and case ignored): exact title
+// first, then the beginning of the title, then any part of it.  "jour"
+// narrows the search to one day.  "apres" places the block after another
+// one of the same cell ("debut" puts it first); default: end of the cell.
+
+const BATCH_FICHE_FIELDS = ['resume', 'duree', 'objectifs', 'deroule', 'materiel', 'notes', 'ficheAnima', 'statut', 'formateurs'];
+let batchPlan = null;
+
+function openBatchModal() {
+  if (!currentState) return;
+  $('batch-modal').classList.remove('hidden');
+  $('batch-error').textContent = '';
+  $('batch-preview').innerHTML = '';
+  $('batch-input-wrap').style.display = '';
+  $('batch-check').style.display = '';
+  $('batch-apply').disabled = true;
+  batchPlan = null;
+}
+
+function closeBatchModal() { $('batch-modal').classList.add('hidden'); }
+
+function batchDayId(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const k = foldText(raw).replace(/\s+/g, '');
+  const d = currentState.days.find((x) => x.id === k || foldText(x.short) === k || foldText(x.name) === k);
+  if (!d) throw new Error('Jour inconnu : ' + raw);
+  return d.id;
+}
+
+function batchSlotId(raw) {
+  const k = foldText(raw).replace(/[\s-]+/g, '');
+  const map = { matin: 'matin', aprem: 'aprem', apresmidi: 'aprem', veillee: 'veillee', soir: 'veillee' };
+  if (!map[k]) throw new Error('Créneau inconnu : ' + raw + ' (matin, aprem ou veillee)');
+  return map[k];
+}
+
+function batchFind(tasks, title, dayId) {
+  const q = foldText(title).trim();
+  if (!q) throw new Error('Titre de tâche manquant');
+  const pool = tasks.filter((t) => !dayId || t.dayId === dayId);
+  for (const test of [(t) => t === q, (t) => t.startsWith(q), (t) => t.includes(q)]) {
+    const hits = pool.filter((t) => test(foldText(t.text).trim()));
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) throw new Error('« ' + title + ' » correspond à ' + hits.length + ' temps, précisez le jour ou le titre');
+  }
+  throw new Error('Temps introuvable : « ' + title + ' »' + (dayId ? ' (' + dayId.toUpperCase() + ')' : ''));
+}
+
+function batchCell(tasks, dayId, slotId, exceptId) {
+  return tasks.filter((t) => t.dayId === dayId && t.slotId === slotId && t.id !== exceptId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+// Index in the destination cell (without the moved block) for "apres".
+function batchIndex(tasks, dayId, slotId, apres, exceptId) {
+  const cell = batchCell(tasks, dayId, slotId, exceptId);
+  if (apres === undefined || apres === null || apres === '') return cell.length;
+  if (foldText(apres) === 'debut') return 0;
+  const ref = batchFind(cell, apres, null);
+  return cell.indexOf(ref) + 1;
+}
+
+function batchPlace(tasks, task, dayId, slotId, index) {
+  const cell = batchCell(tasks, dayId, slotId, task.id);
+  task.dayId = dayId; task.slotId = slotId;
+  cell.splice(index, 0, task);
+  cell.forEach((t, i) => { t.order = i; });
+}
+
+function batchFichePatch(fiche, current) {
+  if (!fiche || typeof fiche !== 'object') throw new Error('« fiche » doit être un objet');
+  const patch = {};
+  for (const [k, v] of Object.entries(fiche)) {
+    if (k === 'horaire') continue;
+    if (!BATCH_FICHE_FIELDS.includes(k)) throw new Error('Champ de fiche inconnu : ' + k);
+    patch[k] = v;
+  }
+  if (fiche.horaire) {
+    const line = 'Horaire conseillé : ' + String(fiche.horaire).trim();
+    const base = patch.deroule !== undefined ? String(patch.deroule) : String((current && current.deroule) || '');
+    patch.deroule = /^Horaire conseillé/.test(base) ? base.replace(/^[^\n]*/, line) : (base ? line + '\n\n' + base : line);
+  }
+  return patch;
+}
+
+// Resolve every change against a copy of the planning, in order, so a
+// later change can refer to a block renamed or added by an earlier one.
+function buildBatchPlan(data) {
+  if (!data || !Array.isArray(data.modifs) || !data.modifs.length) throw new Error('Aucune modification (« modifs » vide)');
+  if (data.modifs.length > 200) throw new Error('Trop de modifications d\'un coup (200 maximum)');
+  const sim = currentState.tasks.map((t) => ({ id: t.id, text: t.text, dayId: t.dayId, slotId: t.slotId, order: t.order, details: t.details }));
+  let tmp = 0;
+  const steps = data.modifs.map((m, i) => {
+    const step = { n: i + 1, raw: m, label: '', detail: '', error: null };
+    try {
+      const type = foldText(m.type || '');
+      if (type === 'renommer') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        const text = String(m.titre || '').trim();
+        if (!text) throw new Error('Nouveau titre manquant');
+        step.label = 'Renommer « ' + t.text + ' »';
+        step.detail = '→ « ' + text + ' »';
+        step.op = { kind: 'edit', ref: t.id, text };
+        t.text = text;
+        if (m.fiche) { step.patch = batchFichePatch(m.fiche, t.details); step.detail += ' + fiche (' + Object.keys(step.patch).join(', ') + ')'; }
+      } else if (type === 'fiche') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        step.patch = batchFichePatch(m.fiche, t.details);
+        step.label = 'Fiche de « ' + t.text + ' »';
+        step.detail = 'Champs : ' + Object.keys(step.patch).join(', ');
+        step.op = { kind: 'fiche', ref: t.id };
+        t.details = { ...(t.details || {}), ...step.patch };
+      } else if (type === 'ajouter') {
+        const dayId = batchDayId(m.jour);
+        if (!dayId) throw new Error('Jour manquant');
+        const slotId = batchSlotId(m.creneau || '');
+        const text = String(m.titre || '').trim();
+        if (!text) throw new Error('Titre manquant');
+        const index = batchIndex(sim, dayId, slotId, m.apres, null);
+        const t = { id: 'new:' + (++tmp), text, dayId, slotId, order: 0 };
+        sim.push(t);
+        batchPlace(sim, t, dayId, slotId, index);
+        if (m.fiche) step.patch = batchFichePatch(m.fiche, null);
+        step.label = 'Ajouter « ' + text + ' »';
+        step.detail = dayId.toUpperCase() + ' ' + slotId + (m.apres ? ', après « ' + m.apres + ' »' : '') + (step.patch ? ' + fiche' : '');
+        step.op = { kind: 'add', ref: t.id, text, dayId, slotId, index };
+      } else if (type === 'deplacer') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        const to = m.vers || {};
+        const dayId = batchDayId(to.jour) || t.dayId;
+        const slotId = to.creneau ? batchSlotId(to.creneau) : t.slotId;
+        const index = batchIndex(sim, dayId, slotId, to.apres, t.id);
+        step.label = 'Déplacer « ' + t.text + ' »';
+        step.detail = '→ ' + dayId.toUpperCase() + ' ' + slotId + (to.apres ? ', après « ' + to.apres + ' »' : '');
+        step.op = { kind: 'move', ref: t.id, dayId, slotId, index };
+        batchPlace(sim, t, dayId, slotId, index);
+      } else if (type === 'supprimer') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        step.label = 'Supprimer « ' + t.text + ' »';
+        step.detail = t.dayId.toUpperCase() + ' ' + t.slotId;
+        step.op = { kind: 'remove', ref: t.id };
+        sim.splice(sim.indexOf(t), 1);
+        batchCell(sim, t.dayId, t.slotId).forEach((x, k) => { x.order = k; });
+      } else {
+        throw new Error('Type inconnu : « ' + (m.type || '') + ' » (renommer, fiche, ajouter, deplacer, supprimer)');
+      }
+    } catch (e) {
+      step.error = e.message;
+    }
+    return step;
+  });
+  return { titre: String(data.titre || ''), steps };
+}
+
+function renderBatchPlan() {
+  const { titre, steps } = batchPlan;
+  const errs = steps.filter((s) => s.error).length;
+  $('batch-preview').innerHTML =
+    '<h4>' + escapeHtml(titre || 'Modifications') + ' · ' + steps.length + ' changement' + (steps.length > 1 ? 's' : '') + '</h4>' +
+    steps.map((s) => '<div class="batch-row' + (s.error ? ' err' : '') + (s.done ? ' done' : '') + '">' +
+      '<span class="batch-ico">' + (s.error ? '⚠️' : s.done ? '✅' : s.n) + '</span>' +
+      '<span>' + escapeHtml(s.error ? 'Modif ' + s.n + ' : ' + s.error : s.label) +
+      (s.error ? '' : '<small>' + escapeHtml(s.detail) + '</small>') + '</span></div>').join('');
+  $('batch-error').textContent = errs ? errs + ' modification(s) à corriger : rien ne sera appliqué tant qu\'il y a une erreur.' : '';
+  $('batch-apply').disabled = !!errs || steps.every((s) => s.done);
+}
+
+function previewBatch() {
+  $('batch-error').textContent = '';
+  let data;
+  const raw = $('batch-input').value.trim().replace(/^```\w*\s*|\s*```$/g, '').replace(/[“”]/g, '"');
+  try { data = JSON.parse(raw); } catch (e) {
+    $('batch-error').textContent = 'Le texte collé n\'est pas un bloc valide (copiez tout le bloc, accolades comprises).';
+    return;
+  }
+  try { batchPlan = buildBatchPlan(data); } catch (e) {
+    $('batch-error').textContent = e.message;
+    return;
+  }
+  renderBatchPlan();
+}
+
+async function applyBatch() {
+  if (!batchPlan || batchPlan.steps.some((s) => s.error)) return;
+  $('batch-apply').disabled = true;
+  $('batch-check').style.display = 'none';
+  $('batch-input-wrap').style.display = 'none';
+  const ids = {};
+  const real = (ref) => (ref.startsWith('new:') ? ids[ref] : ref);
+  for (const s of batchPlan.steps) {
+    if (s.done) continue;
+    try {
+      const o = s.op;
+      if (o.kind === 'edit') {
+        await pushOp({ op: 'edit', taskId: real(o.ref), text: o.text });
+      } else if (o.kind === 'add') {
+        const before = new Set(currentState.tasks.map((t) => t.id));
+        const next = await pushOp({ op: 'add', dayId: o.dayId, slotId: o.slotId, text: o.text });
+        const created = next.tasks.find((t) => !before.has(t.id));
+        if (!created) throw new Error('Bloc ajouté introuvable');
+        ids[o.ref] = created.id;
+        await pushOp({ op: 'move', taskId: created.id, dayId: o.dayId, slotId: o.slotId, index: o.index });
+      } else if (o.kind === 'move') {
+        await pushOp({ op: 'move', taskId: real(o.ref), dayId: o.dayId, slotId: o.slotId, index: o.index });
+      } else if (o.kind === 'remove') {
+        await pushOp({ op: 'remove', taskId: real(o.ref) });
+      }
+      if (s.patch && Object.keys(s.patch).length) {
+        await pushOp({ op: 'setDetails', taskId: real(o.ref), details: s.patch });
+      }
+      s.done = true;
+    } catch (e) {
+      s.error = 'non appliquée (' + (e.message || 'erreur') + ')';
+      renderBatchPlan();
+      $('batch-error').textContent = 'Arrêt à la modification ' + s.n + '. Les précédentes sont enregistrées.';
+      return;
+    }
+    renderBatchPlan();
+  }
+  $('batch-error').textContent = '';
+  $('batch-preview').insertAdjacentHTML('beforeend', '<p><strong>Tout est appliqué ✅</strong></p>');
+}
