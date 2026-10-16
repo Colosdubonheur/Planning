@@ -751,6 +751,70 @@ function horaireOf(t) {
   return m ? m[1].trim() : '';
 }
 
+// "9h30 - 11h15" -> { start: 570, end: 675 } (minutes); end may be null.
+function parseHoraire(h) {
+  const m = /(\d{1,2})\s*h\s*(\d{2})?(?:\s*[-–à]+\s*(\d{1,2})\s*h\s*(\d{2})?)?/i.exec(h || '');
+  if (!m) return null;
+  const start = +m[1] * 60 + (+m[2] || 0);
+  const end = m[3] !== undefined ? +m[3] * 60 + (+m[4] || 0) : null;
+  return { start, end };
+}
+const fmtHoraire = (min) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+const toTimeInput = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const fromTimeInput = (v) => { const m = /^(\d{1,2}):(\d{2})/.exec(v || ''); return m ? +m[1] * 60 + +m[2] : null; };
+
+// After a move, offer to adjust the time: starts when the previous block
+// ends and keeps the block's duration.  Skipped when nothing has a time.
+let horaireTaskId = null;
+function offerHoraire(taskId) {
+  if (!currentState) return;
+  const t = currentState.tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  const col = currentState.tasks
+    .filter((x) => x.dayId === t.dayId && x.slotId === t.slotId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const i = col.findIndex((x) => x.id === taskId);
+  const own = parseHoraire(horaireOf(t));
+  const prev = i > 0 ? parseHoraire(horaireOf(col[i - 1])) : null;
+  const next = i < col.length - 1 ? parseHoraire(horaireOf(col[i + 1])) : null;
+  if (!own && !prev && !next) return;
+  const dur = own && own.end != null && own.end > own.start ? own.end - own.start : 30;
+  let start = prev ? (prev.end != null ? prev.end : prev.start + 30) : next ? next.start : own.start;
+  start = Math.max(0, Math.min(start, 24 * 60 - dur));
+  horaireTaskId = taskId;
+  $('horaire-task').textContent = t.text;
+  $('horaire-current').textContent = horaireOf(t) ? `Horaire actuel : ${horaireOf(t)}` : 'Pas encore d\'horaire';
+  $('horaire-start').value = toTimeInput(start);
+  $('horaire-end').value = toTimeInput(start + dur);
+  $('horaire-error').textContent = '';
+  $('horaire-modal').classList.remove('hidden');
+}
+
+function closeHoraireModal() {
+  $('horaire-modal').classList.add('hidden');
+  horaireTaskId = null;
+}
+
+async function saveHoraire() {
+  const t = currentState && currentState.tasks.find((x) => x.id === horaireTaskId);
+  if (!t) { closeHoraireModal(); return; }
+  const start = fromTimeInput($('horaire-start').value);
+  const end = fromTimeInput($('horaire-end').value);
+  if (start == null || end == null || end <= start) { $('horaire-error').textContent = 'La fin doit être après le début'; return; }
+  const line = `Horaire conseillé : ${fmtHoraire(start)} - ${fmtHoraire(end)}`;
+  const old = String((t.details && t.details.deroule) || '');
+  const deroule = /Horaire conseillé : [^\n]*/.test(old)
+    ? old.replace(/Horaire conseillé : [^\n]*/, line)
+    : line + (old ? '\n\n' + old : '');
+  try {
+    await pushOp({ op: 'setDetails', taskId: t.id, details: { deroule } });
+    closeHoraireModal();
+    showToast('Horaire mis à jour');
+  } catch (e) {
+    $('horaire-error').textContent = e.message || 'Erreur';
+  }
+}
+
 function dayStorageKey() { return 'pb-day-' + (currentPlanningId || ''); }
 
 function defaultDayId() {
@@ -888,6 +952,7 @@ function initDragAndDrop() {
             slotId: cell.dataset.slot,
             index: evt.newIndex,
           });
+          offerHoraire(taskId);
         } catch (err) {
           showToast(err.message || 'Déplacement impossible');
           renderPlanning();
@@ -1031,7 +1096,7 @@ function openTaskMenu(taskId, anchor) {
     else if (action === 'move') openMoveModal(t);
     else if (action === 'remove') confirmRemove(t);
     else if (action === 'up' || action === 'down') {
-      try { await pushOp({ op: 'reorder', taskId, direction: action }); }
+      try { await pushOp({ op: 'reorder', taskId, direction: action }); offerHoraire(taskId); }
       catch (err) { alert(err.message || 'Erreur'); }
     }
   });
@@ -1132,6 +1197,10 @@ async function submitEditModal() {
       const dayId = $('edit-day').value;
       const slotId = $('edit-slot').value;
       await pushOp({ op: 'move', taskId: editTaskId, dayId, slotId });
+      const movedId = editTaskId;
+      closeEditModal();
+      offerHoraire(movedId);
+      return;
     }
     closeEditModal();
   } catch (e) {
