@@ -352,12 +352,33 @@ function renderPlanningSelector() {
 //   - logged-in validator with no planning → empty card explaining they need
 //     an editor to grant them access
 //   - anonymous viewer with no planning   → invite to log in
+// True until the first planning (or the lack of one) is known, and while
+// switching planning: the page shows "Chargement du planning…" instead of
+// the "Aucun planning" card, which used to flash on every opening.
+let planningLoading = true;
+
+function setPlanningLoading(on) {
+  planningLoading = !!on;
+  refreshEmptyState();
+}
+
 function refreshEmptyState() {
   const empty = $('empty-state');
   const tableWrap = $('table-scroll');
   const msg = $('empty-state-message');
   const btn = $('empty-state-create');
+  const loading = $('loading-state');
+  const search = $('search-bar');
   if (!empty || !tableWrap) return;
+  if (loading) loading.classList.toggle('hidden', !planningLoading);
+  if (search) search.style.display = !planningLoading && currentState ? '' : 'none';
+  if (planningLoading) {
+    empty.classList.add('hidden');
+    tableWrap.style.display = 'none';
+    document.body.classList.add('planning-loading');
+    return;
+  }
+  document.body.classList.remove('planning-loading');
   const showEmpty = !currentPlanningId;
   empty.classList.toggle('hidden', !showEmpty);
   tableWrap.style.display = showEmpty ? 'none' : '';
@@ -383,7 +404,8 @@ function refreshEmptyState() {
 async function onPlanningSelectChange(id) {
   if (!id || id === currentPlanningId) return;
   rememberPlanningId(id);
-  await fetchState();
+  setPlanningLoading(true);
+  try { await fetchState(); } finally { setPlanningLoading(false); }
   renderPlanningSelector();
   // Re-evaluate UI because ownership (and therefore editing rights) depends
   // on which planning is active.
@@ -822,6 +844,7 @@ function renderDayView() {
     + (idx < days.length - 1 ? `<button type="button" data-dv-day="${escapeHtml(days[idx + 1].id)}">${escapeHtml(days[idx + 1].short)} ${escapeHtml(days[idx + 1].name)} ›</button>` : '<span></span>')
     + '</div></div>';
   dv.innerHTML = html;
+  applySearchHighlight();
   const active = dv.querySelector('.dv-tab.active');
   if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
@@ -1545,6 +1568,7 @@ function pickInitialPlanningId(list) {
 // ── INIT ───────────────────────────────────────────────────────
 async function startAuthenticated() {
   hideLoginGate();
+  setPlanningLoading(true);
   applyUserUI();
   setSyncStatus('syncing', 'Connexion…');
   try {
@@ -1567,6 +1591,7 @@ async function startAuthenticated() {
   } catch (e) {
     setSyncStatus('offline', 'Hors ligne');
   }
+  setPlanningLoading(false);
   applyUserUI();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, POLL_MS);
@@ -1613,6 +1638,7 @@ async function startPublic() {
       setSyncStatus('offline', 'Hors ligne');
     }
   }
+  setPlanningLoading(false);
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, POLL_MS);
 }
@@ -1977,7 +2003,7 @@ function setDetailsMode(mode) {
 function richText(s) {
   return String(s || '').split('\n').map((line) => {
     const ln = /^(\s*[•\-]\s*)(.+?)\s:\s(https?:\/\/\S+)\s*$/.exec(line);
-    if (ln) return escapeHtml(ln[1]) + `<a href="${escapeHtml(ln[3])}" target="_blank" rel="noopener">${escapeHtml(ln[2])}</a>`;
+    if (ln) return escapeHtml(ln[1]) + `<a href="${escapeHtml(ln[3])}"${docKind(ln[3]) ? ' class="doc-link"' : ''} target="_blank" rel="noopener">${escapeHtml(ln[2])}</a>`;
     return escapeHtml(line).replace(/(https?:\/\/[^\s<]+)/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u.length > 40 ? u.slice(0, 40) + '…' : u}</a>`);
   }).join('\n');
 }
@@ -2332,3 +2358,264 @@ async function submitJoin(e) {
     btn.disabled = false;
   }
 }
+
+// ── RECHERCHE ──────────────────────────────────────────────────
+// Searches task titles and the fiche fields the viewer can see (the public
+// share link only receives the public part).  Accents and case are ignored.
+const SEARCH_FIELDS = [
+  ['resume', 'Pour les stagiaires'], ['objectifs', 'Ce qu\'on présente'], ['deroule', 'Déroulé'],
+  ['materiel', 'Matériel et ressources'], ['notes', 'Notes'], ['ficheAnima', 'Fiche Anima'],
+];
+let searchQuery = '';
+
+function foldText(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+// Highlight `terms` in `text` (accent-insensitive), escaping the rest.
+function markTerms(text, terms) {
+  const src = String(text || '');
+  const folded = foldText(src);
+  const ranges = [];
+  for (const term of terms) {
+    let i = folded.indexOf(term);
+    while (i !== -1 && term) { ranges.push([i, i + term.length]); i = folded.indexOf(term, i + term.length); }
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  let out = '', pos = 0;
+  for (const [a, b] of ranges) {
+    if (a < pos) continue;
+    out += escapeHtml(src.slice(pos, a)) + '<mark>' + escapeHtml(src.slice(a, b)) + '</mark>';
+    pos = b;
+  }
+  return out + escapeHtml(src.slice(pos));
+}
+
+function searchTasks(query) {
+  const terms = foldText(query).split(/\s+/).filter(Boolean);
+  if (!terms.length || !currentState) return { terms, results: [] };
+  const dayIdx = new Map(currentState.days.map((d, i) => [d.id, i]));
+  const slotIdx = new Map(currentState.slots.map((s, i) => [s.id, i]));
+  const results = [];
+  for (const t of currentState.tasks) {
+    const d = t.details || {};
+    const haystack = foldText([t.text, ...SEARCH_FIELDS.map(([f]) => d[f])].join('\n'));
+    if (!terms.every((term) => haystack.includes(term))) continue;
+    let snippet = '';
+    if (!terms.every((term) => foldText(t.text).includes(term))) {
+      for (const [f, label] of SEARCH_FIELDS) {
+        const v = String(d[f] || '');
+        const fv = foldText(v);
+        const hit = terms.map((term) => fv.indexOf(term)).filter((i) => i !== -1).sort((a, b) => a - b)[0];
+        if (hit === undefined) continue;
+        const start = Math.max(0, v.lastIndexOf('\n', hit) + 1, hit - 60);
+        let end = v.indexOf('\n', hit); if (end === -1 || end - hit > 110) end = Math.min(v.length, hit + 110);
+        snippet = `${label} : ${start > 0 && v[start - 1] !== '\n' ? '…' : ''}${v.slice(start, end).trim()}${end < v.length && v[end] !== '\n' ? '…' : ''}`;
+        break;
+      }
+    }
+    results.push({ t, snippet, rank: [terms.every((term) => foldText(t.text).includes(term)) ? 0 : 1, dayIdx.get(t.dayId) ?? 99, slotIdx.get(t.slotId) ?? 99, t.order ?? 0] });
+  }
+  results.sort((a, b) => { for (let i = 0; i < 4; i++) if (a.rank[i] !== b.rank[i]) return a.rank[i] - b.rank[i]; return 0; });
+  return { terms, results };
+}
+
+function renderSearchResults() {
+  const box = $('search-results');
+  if (!box) return;
+  $('search-clear').style.display = searchQuery ? '' : 'none';
+  if (!searchQuery.trim()) { box.style.display = 'none'; box.innerHTML = ''; applySearchHighlight(); return; }
+  const { terms, results } = searchTasks(searchQuery);
+  const days = new Map(currentState.days.map((d) => [d.id, d]));
+  const slots = new Map(currentState.slots.map((s) => [s.id, s]));
+  let html = `<div class="sr-count">${results.length} résultat${results.length > 1 ? 's' : ''}</div>`;
+  if (!results.length) html += '<div class="sr-empty">Aucun temps ne correspond à cette recherche.</div>';
+  for (const { t, snippet } of results.slice(0, 60)) {
+    const d = days.get(t.dayId), sl = slots.get(t.slotId), h = horaireOf(t);
+    const where = [d && `${d.short} ${d.name}`, sl && sl.label, h].filter(Boolean).join(' · ');
+    html += `<button type="button" class="sr-item" data-search-task="${escapeHtml(t.id)}">
+      <span class="sr-where">${escapeHtml(where)}</span>
+      <span class="sr-text">${markTerms(t.text, terms)}</span>
+      ${snippet ? `<span class="sr-snippet">${markTerms(snippet, terms)}</span>` : ''}
+    </button>`;
+  }
+  box.innerHTML = html;
+  box.style.display = '';
+  applySearchHighlight();
+}
+
+// Dims the tasks that do not match, in the table and in the day view.
+function applySearchHighlight() {
+  const active = !!searchQuery.trim() && !!currentState;
+  document.body.classList.toggle('searching', active);
+  const ids = active ? new Set(searchTasks(searchQuery).results.map((r) => r.t.id)) : new Set();
+  document.querySelectorAll('li.task[data-task-id]').forEach((li) => li.classList.toggle('search-hit', ids.has(li.dataset.taskId)));
+}
+
+function goToSearchResult(taskId) {
+  const t = currentState && currentState.tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  $('search-results').style.display = 'none';
+  if (showDetailsButton(t)) { openDetailsModal(taskId); return; }
+  const mobile = window.matchMedia('(max-width: 720px)').matches;
+  if (mobile && t.dayId !== dayViewDayId) setDayViewDay(t.dayId);
+  const scope = mobile ? '#day-view' : '#planning-table';
+  const li = document.querySelector(`${scope} li.task[data-task-id="${CSS.escape(taskId)}"]`);
+  if (li) li.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+}
+
+function clearSearch() {
+  searchQuery = '';
+  const input = $('search-input');
+  if (input) input.value = '';
+  renderSearchResults();
+}
+
+function initSearch() {
+  const input = $('search-input');
+  if (!input) return;
+  let timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { searchQuery = input.value; renderSearchResults(); }, 120);
+  });
+  input.addEventListener('focus', () => { if (searchQuery.trim()) renderSearchResults(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { clearSearch(); input.blur(); }
+    if (e.key === 'Enter') {
+      const first = $('search-results').querySelector('[data-search-task]');
+      if (first) { e.preventDefault(); input.blur(); goToSearchResult(first.dataset.searchTask); }
+    }
+  });
+  $('search-clear').addEventListener('click', () => { clearSearch(); input.focus(); });
+  $('search-results').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-search-task]');
+    if (b) goToSearchResult(b.dataset.searchTask);
+  });
+  // Close the result list when tapping elsewhere (the highlight stays).
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#search-bar')) $('search-results').style.display = 'none';
+  });
+}
+
+// ── VISIONNEUSE DE DOCUMENTS ───────────────────────────────────
+// Opens the Anima resources linked in a fiche inside the app.  PDFs are
+// fetched through /api/doc (Anima's servers do not let other sites read
+// them) and drawn with pdf.js, which also works on phones; images and
+// videos load directly; Office files use Microsoft's online viewer.
+const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+let pdfjsPromise = null;
+let docViewerToken = 0;
+
+function docKind(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const name = (u.searchParams.get('name') || u.pathname).toLowerCase();
+  const ext = (name.match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  if (ext === 'pdf') return 'pdf';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
+  if (['mp4', 'webm', 'mov'].includes(ext)) return 'video';
+  if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(ext)) return 'office';
+  return null;
+}
+
+function loadPdfJs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import(PDFJS_URL).then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+      return lib;
+    }).catch((e) => { pdfjsPromise = null; throw e; });
+  }
+  return pdfjsPromise;
+}
+
+function docMessage(html) {
+  $('doc-body').innerHTML = `<div class="doc-msg">${html}</div>`;
+}
+
+async function renderPdfInto(url, token) {
+  const body = $('doc-body');
+  docMessage('<div class="spinner"></div><p style="margin-top:12px">Chargement du document…</p>');
+  const res = await fetch('/api/doc?url=' + encodeURIComponent(url), { credentials: 'same-origin' });
+  if (!res.ok) throw new Error((await res.text().catch(() => '')) || 'Document indisponible');
+  const [lib, data] = await Promise.all([loadPdfJs(), res.arrayBuffer()]);
+  if (token !== docViewerToken) return;
+  const pdf = await lib.getDocument({ data }).promise;
+  if (token !== docViewerToken) return;
+  body.innerHTML = '';
+  const width = Math.max(280, body.clientWidth - 16);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  for (let i = 1; i <= pdf.numPages; i++) {
+    if (token !== docViewerToken) return;
+    const page = await pdf.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: (width / base.width) * dpr });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    canvas.style.width = Math.floor(viewport.width / dpr) + 'px';
+    body.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  }
+}
+
+async function openDocViewer(url, title) {
+  const kind = docKind(url);
+  if (!kind) { window.open(url, '_blank', 'noopener'); return; }
+  const token = ++docViewerToken;
+  $('doc-title').textContent = title || 'Document';
+  $('doc-open').href = url;
+  $('doc-modal').classList.remove('hidden');
+  const body = $('doc-body');
+  body.scrollTop = 0;
+  try {
+    if (kind === 'pdf') {
+      await renderPdfInto(url, token);
+    } else if (kind === 'image') {
+      body.innerHTML = '';
+      const img = document.createElement('img');
+      img.alt = title || '';
+      img.src = url;
+      body.appendChild(img);
+    } else if (kind === 'video') {
+      body.innerHTML = '';
+      const v = document.createElement('video');
+      v.controls = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
+      body.appendChild(v);
+    } else {
+      body.innerHTML = '';
+      const f = document.createElement('iframe');
+      f.title = title || 'Document';
+      f.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url);
+      body.appendChild(f);
+    }
+  } catch (e) {
+    if (token !== docViewerToken) return;
+    docMessage(`Impossible d'afficher ce document ici (${escapeHtml(e.message || 'erreur')}).<br><br><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Ouvrir le document à part ↗</a>`);
+  }
+}
+
+function closeDocViewer() {
+  docViewerToken++;
+  $('doc-modal').classList.add('hidden');
+  $('doc-body').innerHTML = '';
+}
+
+function initDocViewer() {
+  const read = $('details-read');
+  if (read) {
+    read.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href]');
+      if (!a || !docKind(a.href)) return;
+      e.preventDefault();
+      openDocViewer(a.href, a.textContent.trim());
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('doc-modal').classList.contains('hidden')) closeDocViewer();
+  });
+}
+
+window.closeDocViewer = closeDocViewer;
+window.addEventListener('DOMContentLoaded', () => { initSearch(); initDocViewer(); });
