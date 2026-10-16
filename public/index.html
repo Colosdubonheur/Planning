@@ -620,6 +620,12 @@
   }
   .search-box input::-webkit-search-cancel-button { display: none; }
   .search-clear { border: none; background: none; font-size: 12pt; color: #889; cursor: pointer; padding: 6px; }
+  .search-scope { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 8.5pt; color: #667; flex-wrap: wrap; }
+  .search-scope button {
+    border: 1.5px solid var(--border); background: white; color: var(--navy); border-radius: 999px;
+    padding: 4px 11px; font-family: 'Nunito', sans-serif; font-size: 9pt; font-weight: 700; cursor: pointer;
+  }
+  .search-scope button.active { background: var(--navy); border-color: var(--navy); color: white; }
   .search-results {
     position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 800;
     background: white; border: 1px solid var(--border); border-radius: 10px;
@@ -1405,6 +1411,12 @@
       <span class="search-icon" aria-hidden="true">🔍</span>
       <input type="search" id="search-input" placeholder="Rechercher un temps, un thème, un document…" autocomplete="off" enterkeyhint="search" aria-label="Rechercher dans le planning">
       <button type="button" class="search-clear" id="search-clear" aria-label="Effacer la recherche" style="display:none">✕</button>
+    </div>
+    <div class="search-scope" id="search-scope" role="radiogroup" aria-label="Où chercher">
+      <span>Chercher dans :</span>
+      <button type="button" data-scope="title" role="radio">Titre</button>
+      <button type="button" data-scope="details" role="radio">Fiche</button>
+      <button type="button" data-scope="both" role="radio">Les deux</button>
     </div>
     <div class="search-results" id="search-results" style="display:none"></div>
   </div>

@@ -2367,6 +2367,9 @@ const SEARCH_FIELDS = [
   ['materiel', 'Matériel et ressources'], ['notes', 'Notes'], ['ficheAnima', 'Fiche Anima'],
 ];
 let searchQuery = '';
+// Where to search: 'title' (default), 'details' (fiche content) or 'both'.
+let searchScope = (() => { try { return localStorage.getItem('planning.searchScope') || 'title'; } catch { return 'title'; } })();
+if (!['title', 'details', 'both'].includes(searchScope)) searchScope = 'title';
 
 function foldText(s) {
   return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
@@ -2399,10 +2402,15 @@ function searchTasks(query) {
   const results = [];
   for (const t of currentState.tasks) {
     const d = t.details || {};
-    const haystack = foldText([t.text, ...SEARCH_FIELDS.map(([f]) => d[f])].join('\n'));
+    const inTitle = searchScope !== 'details';
+    const inDetails = searchScope !== 'title';
+    const parts = [];
+    if (inTitle) parts.push(t.text);
+    if (inDetails) parts.push(...SEARCH_FIELDS.map(([f]) => d[f]));
+    const haystack = foldText(parts.join('\n'));
     if (!terms.every((term) => haystack.includes(term))) continue;
     let snippet = '';
-    if (!terms.every((term) => foldText(t.text).includes(term))) {
+    if (inDetails && !(inTitle && terms.every((term) => foldText(t.text).includes(term)))) {
       for (const [f, label] of SEARCH_FIELDS) {
         const v = String(d[f] || '');
         const fv = foldText(v);
@@ -2429,7 +2437,11 @@ function renderSearchResults() {
   const days = new Map(currentState.days.map((d) => [d.id, d]));
   const slots = new Map(currentState.slots.map((s) => [s.id, s]));
   let html = `<div class="sr-count">${results.length} résultat${results.length > 1 ? 's' : ''}</div>`;
-  if (!results.length) html += '<div class="sr-empty">Aucun temps ne correspond à cette recherche.</div>';
+  if (!results.length) {
+    const hint = searchScope === 'title' ? ' dans les titres. Essayez « Fiche » ou « Les deux ».'
+      : searchScope === 'details' ? ' dans les fiches. Essayez « Titre » ou « Les deux ».' : '.';
+    html += `<div class="sr-empty">Aucun temps ne correspond à cette recherche${hint}</div>`;
+  }
   for (const { t, snippet } of results.slice(0, 60)) {
     const d = days.get(t.dayId), sl = slots.get(t.slotId), h = horaireOf(t);
     const where = [d && `${d.short} ${d.name}`, sl && sl.label, h].filter(Boolean).join(' · ');
@@ -2464,6 +2476,14 @@ function goToSearchResult(taskId) {
   if (li) li.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
 }
 
+function renderSearchScope() {
+  document.querySelectorAll('#search-scope [data-scope]').forEach((b) => {
+    const on = b.dataset.scope === searchScope;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
 function clearSearch() {
   searchQuery = '';
   const input = $('search-input');
@@ -2488,6 +2508,15 @@ function initSearch() {
     }
   });
   $('search-clear').addEventListener('click', () => { clearSearch(); input.focus(); });
+  renderSearchScope();
+  $('search-scope').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-scope]');
+    if (!b) return;
+    searchScope = b.dataset.scope;
+    try { localStorage.setItem('planning.searchScope', searchScope); } catch {}
+    renderSearchScope();
+    renderSearchResults();
+  });
   $('search-results').addEventListener('click', (e) => {
     const b = e.target.closest('[data-search-task]');
     if (b) goToSearchResult(b.dataset.searchTask);
