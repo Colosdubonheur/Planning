@@ -241,6 +241,7 @@ function applyUserUI() {
   $('btn-delete-planning').style.display = owner ? '' : 'none';
   $('btn-anima-sync').style.display = owner ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
+  $('btn-batch').style.display = owner ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -343,6 +344,7 @@ function renderPlanningSelector() {
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
+  $('btn-batch').style.display = canOwn ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -352,12 +354,33 @@ function renderPlanningSelector() {
 //   - logged-in validator with no planning → empty card explaining they need
 //     an editor to grant them access
 //   - anonymous viewer with no planning   → invite to log in
+// True until the first planning (or the lack of one) is known, and while
+// switching planning: the page shows "Chargement du planning…" instead of
+// the "Aucun planning" card, which used to flash on every opening.
+let planningLoading = true;
+
+function setPlanningLoading(on) {
+  planningLoading = !!on;
+  refreshEmptyState();
+}
+
 function refreshEmptyState() {
   const empty = $('empty-state');
   const tableWrap = $('table-scroll');
   const msg = $('empty-state-message');
   const btn = $('empty-state-create');
+  const loading = $('loading-state');
+  const search = $('search-bar');
   if (!empty || !tableWrap) return;
+  if (loading) loading.classList.toggle('hidden', !planningLoading);
+  if (search) search.style.display = !planningLoading && currentState ? '' : 'none';
+  if (planningLoading) {
+    empty.classList.add('hidden');
+    tableWrap.style.display = 'none';
+    document.body.classList.add('planning-loading');
+    return;
+  }
+  document.body.classList.remove('planning-loading');
   const showEmpty = !currentPlanningId;
   empty.classList.toggle('hidden', !showEmpty);
   tableWrap.style.display = showEmpty ? 'none' : '';
@@ -383,7 +406,8 @@ function refreshEmptyState() {
 async function onPlanningSelectChange(id) {
   if (!id || id === currentPlanningId) return;
   rememberPlanningId(id);
-  await fetchState();
+  setPlanningLoading(true);
+  try { await fetchState(); } finally { setPlanningLoading(false); }
   renderPlanningSelector();
   // Re-evaluate UI because ownership (and therefore editing rights) depends
   // on which planning is active.
@@ -751,6 +775,70 @@ function horaireOf(t) {
   return m ? m[1].trim() : '';
 }
 
+// "9h30 - 11h15" -> { start: 570, end: 675 } (minutes); end may be null.
+function parseHoraire(h) {
+  const m = /(\d{1,2})\s*h\s*(\d{2})?(?:\s*[-–à]+\s*(\d{1,2})\s*h\s*(\d{2})?)?/i.exec(h || '');
+  if (!m) return null;
+  const start = +m[1] * 60 + (+m[2] || 0);
+  const end = m[3] !== undefined ? +m[3] * 60 + (+m[4] || 0) : null;
+  return { start, end };
+}
+const fmtHoraire = (min) => `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+const toTimeInput = (min) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+const fromTimeInput = (v) => { const m = /^(\d{1,2}):(\d{2})/.exec(v || ''); return m ? +m[1] * 60 + +m[2] : null; };
+
+// After a move, offer to adjust the time: starts when the previous block
+// ends and keeps the block's duration.  Skipped when nothing has a time.
+let horaireTaskId = null;
+function offerHoraire(taskId) {
+  if (!currentState) return;
+  const t = currentState.tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  const col = currentState.tasks
+    .filter((x) => x.dayId === t.dayId && x.slotId === t.slotId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const i = col.findIndex((x) => x.id === taskId);
+  const own = parseHoraire(horaireOf(t));
+  const prev = i > 0 ? parseHoraire(horaireOf(col[i - 1])) : null;
+  const next = i < col.length - 1 ? parseHoraire(horaireOf(col[i + 1])) : null;
+  if (!own && !prev && !next) return;
+  const dur = own && own.end != null && own.end > own.start ? own.end - own.start : 30;
+  let start = prev ? (prev.end != null ? prev.end : prev.start + 30) : next ? next.start : own.start;
+  start = Math.max(0, Math.min(start, 24 * 60 - dur));
+  horaireTaskId = taskId;
+  $('horaire-task').textContent = t.text;
+  $('horaire-current').textContent = horaireOf(t) ? `Horaire actuel : ${horaireOf(t)}` : 'Pas encore d\'horaire';
+  $('horaire-start').value = toTimeInput(start);
+  $('horaire-end').value = toTimeInput(start + dur);
+  $('horaire-error').textContent = '';
+  $('horaire-modal').classList.remove('hidden');
+}
+
+function closeHoraireModal() {
+  $('horaire-modal').classList.add('hidden');
+  horaireTaskId = null;
+}
+
+async function saveHoraire() {
+  const t = currentState && currentState.tasks.find((x) => x.id === horaireTaskId);
+  if (!t) { closeHoraireModal(); return; }
+  const start = fromTimeInput($('horaire-start').value);
+  const end = fromTimeInput($('horaire-end').value);
+  if (start == null || end == null || end <= start) { $('horaire-error').textContent = 'La fin doit être après le début'; return; }
+  const line = `Horaire conseillé : ${fmtHoraire(start)} - ${fmtHoraire(end)}`;
+  const old = String((t.details && t.details.deroule) || '');
+  const deroule = /Horaire conseillé : [^\n]*/.test(old)
+    ? old.replace(/Horaire conseillé : [^\n]*/, line)
+    : line + (old ? '\n\n' + old : '');
+  try {
+    await pushOp({ op: 'setDetails', taskId: t.id, details: { deroule } });
+    closeHoraireModal();
+    showToast('Horaire mis à jour');
+  } catch (e) {
+    $('horaire-error').textContent = e.message || 'Erreur';
+  }
+}
+
 function dayStorageKey() { return 'pb-day-' + (currentPlanningId || ''); }
 
 function defaultDayId() {
@@ -778,8 +866,11 @@ function setDayViewDay(id) {
   dayViewDayId = id;
   try { localStorage.setItem(dayStorageKey(), id); } catch {}
   renderDayView();
+  initDragAndDrop();
   const dv = $('day-view');
-  if (dv) window.scrollTo({ top: Math.max(0, dv.getBoundingClientRect().top + window.scrollY - 4) });
+  // Only bring the day back into view if the user had scrolled past its top,
+  // so the header menu stays reachable.
+  if (dv && dv.getBoundingClientRect().top < 0) window.scrollTo({ top: dv.getBoundingClientRect().top + window.scrollY });
 }
 
 function renderDayView() {
@@ -803,7 +894,7 @@ function renderDayView() {
     if (slot.id === 'repas') { html += '<div class="dv-repas">🍽 Repas</div>'; continue; }
     const list = tasks.filter((t) => t.dayId === day.id && t.slotId === slot.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     if (!list.length && !(isEditor && editMode)) continue;
-    html += `<section class="dv-slot sl-${escapeHtml(slot.id)}"><h3>${DV_SLOT_ICON[slot.id] || ''} ${escapeHtml(slot.label)}</h3><ul class="tasks">`;
+    html += `<section class="dv-slot sl-${escapeHtml(slot.id)}"><h3>${DV_SLOT_ICON[slot.id] || ''} ${escapeHtml(slot.label)}</h3><ul class="tasks" data-day="${escapeHtml(day.id)}" data-slot="${escapeHtml(slot.id)}">`;
     for (const t of list) {
       const h = horaireOf(t);
       html += `<li class="task${t.done ? ' done' : ''}" data-task-id="${escapeHtml(t.id)}">
@@ -822,8 +913,12 @@ function renderDayView() {
     + (idx < days.length - 1 ? `<button type="button" data-dv-day="${escapeHtml(days[idx + 1].id)}">${escapeHtml(days[idx + 1].short)} ${escapeHtml(days[idx + 1].name)} ›</button>` : '<span></span>')
     + '</div></div>';
   dv.innerHTML = html;
+  applySearchHighlight();
+  // Center the active tab by scrolling the tab strip only: scrollIntoView
+  // would also scroll the page wrapper vertically and hide the header.
+  const tabs = dv.querySelector('.dv-tabs');
   const active = dv.querySelector('.dv-tab.active');
-  if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+  if (tabs && active) tabs.scrollLeft = active.offsetLeft - (tabs.clientWidth - active.offsetWidth) / 2;
 }
 
 function onDayViewClick(e) {
@@ -840,7 +935,7 @@ function onDayViewTouchStart(e) {
   dvTouch = { x: t.clientX, y: t.clientY };
 }
 function onDayViewTouchEnd(e) {
-  if (!dvTouch || !currentState) return;
+  if (!dvTouch || !currentState || isDragging) return;
   const t = e.changedTouches[0];
   const dx = t.clientX - dvTouch.x, dy = t.clientY - dvTouch.y;
   dvTouch = null;
@@ -863,7 +958,8 @@ function initDragAndDrop() {
   sortables = [];
   if (typeof Sortable === 'undefined') return;
   if (!editMode || !canEditContent()) return;
-  document.querySelectorAll('#planning-table td.cell ul.tasks').forEach((ul) => {
+  // Table on desktop, day view on phones (its lists carry data-day / data-slot).
+  document.querySelectorAll('#planning-table td.cell ul.tasks, #day-view ul.tasks[data-slot]').forEach((ul) => {
     sortables.push(Sortable.create(ul, {
       group: 'tasks',
       animation: 150,
@@ -871,12 +967,12 @@ function initDragAndDrop() {
       delayOnTouchOnly: true,
       ghostClass: 'drag-ghost',
       chosenClass: 'drag-chosen',
-      onStart() { isDragging = true; closeTaskMenu(); },
+      onStart() { isDragging = true; dvTouch = null; closeTaskMenu(); },
       async onEnd(evt) {
         isDragging = false;
         const taskId = evt.item && evt.item.dataset.taskId;
-        const cell = evt.to && evt.to.closest('td.cell');
-        if (!taskId || !cell) return;
+        const cell = evt.to && (evt.to.closest('td.cell') || evt.to);
+        if (!taskId || !cell || !cell.dataset.slot) return;
         if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
         try {
           await pushOp({
@@ -886,6 +982,7 @@ function initDragAndDrop() {
             slotId: cell.dataset.slot,
             index: evt.newIndex,
           });
+          offerHoraire(taskId);
         } catch (err) {
           showToast(err.message || 'Déplacement impossible');
           renderPlanning();
@@ -1029,7 +1126,7 @@ function openTaskMenu(taskId, anchor) {
     else if (action === 'move') openMoveModal(t);
     else if (action === 'remove') confirmRemove(t);
     else if (action === 'up' || action === 'down') {
-      try { await pushOp({ op: 'reorder', taskId, direction: action }); }
+      try { await pushOp({ op: 'reorder', taskId, direction: action }); offerHoraire(taskId); }
       catch (err) { alert(err.message || 'Erreur'); }
     }
   });
@@ -1130,6 +1227,10 @@ async function submitEditModal() {
       const dayId = $('edit-day').value;
       const slotId = $('edit-slot').value;
       await pushOp({ op: 'move', taskId: editTaskId, dayId, slotId });
+      const movedId = editTaskId;
+      closeEditModal();
+      offerHoraire(movedId);
+      return;
     }
     closeEditModal();
   } catch (e) {
@@ -1538,6 +1639,18 @@ function pickInitialPlanningId(list) {
   const stored = readStoredPlanningId();
   const ids = list.map((p) => p.id);
   if (urlId && ids.includes(urlId)) return urlId;
+  // Prefer the planning in progress today (latest start if several overlap).
+  const today = todayIso();
+  let current = null;
+  for (const p of list) {
+    const start = p.startDate || (p.firstDay ? inferStartDateFromState({ days: [p.firstDay] }) : '');
+    if (!start || !p.dayCount) continue;
+    const end = new Date(start + 'T12:00:00');
+    end.setDate(end.getDate() + p.dayCount - 1);
+    const endIso = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    if (start <= today && today <= endIso && (!current || start > current.start)) current = { id: p.id, start };
+  }
+  if (current) return current.id;
   if (stored && ids.includes(stored)) return stored;
   return list[0] ? list[0].id : null;
 }
@@ -1545,6 +1658,7 @@ function pickInitialPlanningId(list) {
 // ── INIT ───────────────────────────────────────────────────────
 async function startAuthenticated() {
   hideLoginGate();
+  setPlanningLoading(true);
   applyUserUI();
   setSyncStatus('syncing', 'Connexion…');
   try {
@@ -1567,6 +1681,7 @@ async function startAuthenticated() {
   } catch (e) {
     setSyncStatus('offline', 'Hors ligne');
   }
+  setPlanningLoading(false);
   applyUserUI();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, POLL_MS);
@@ -1613,6 +1728,7 @@ async function startPublic() {
       setSyncStatus('offline', 'Hors ligne');
     }
   }
+  setPlanningLoading(false);
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(poll, POLL_MS);
 }
@@ -1977,7 +2093,7 @@ function setDetailsMode(mode) {
 function richText(s) {
   return String(s || '').split('\n').map((line) => {
     const ln = /^(\s*[•\-]\s*)(.+?)\s:\s(https?:\/\/\S+)\s*$/.exec(line);
-    if (ln) return escapeHtml(ln[1]) + `<a href="${escapeHtml(ln[3])}" target="_blank" rel="noopener">${escapeHtml(ln[2])}</a>`;
+    if (ln) return escapeHtml(ln[1]) + `<a href="${escapeHtml(ln[3])}"${docKind(ln[3]) ? ' class="doc-link"' : ''} target="_blank" rel="noopener">${escapeHtml(ln[2])}</a>`;
     return escapeHtml(line).replace(/(https?:\/\/[^\s<]+)/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u.length > 40 ? u.slice(0, 40) + '…' : u}</a>`);
   }).join('\n');
 }
@@ -2331,4 +2447,530 @@ async function submitJoin(e) {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ── RECHERCHE ──────────────────────────────────────────────────
+// Searches task titles and the fiche fields the viewer can see (the public
+// share link only receives the public part).  Accents and case are ignored.
+const SEARCH_FIELDS = [
+  ['resume', 'Pour les stagiaires'], ['objectifs', 'Ce qu\'on présente'], ['deroule', 'Déroulé'],
+  ['materiel', 'Matériel et ressources'], ['notes', 'Notes'], ['ficheAnima', 'Fiche Anima'],
+];
+let searchQuery = '';
+// Where to search: 'title' (default), 'details' (fiche content) or 'both'.
+let searchScope = (() => { try { return localStorage.getItem('planning.searchScope') || 'title'; } catch { return 'title'; } })();
+if (!['title', 'details', 'both'].includes(searchScope)) searchScope = 'title';
+
+function foldText(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+// Highlight `terms` in `text` (accent-insensitive), escaping the rest.
+function markTerms(text, terms) {
+  const src = String(text || '');
+  const folded = foldText(src);
+  const ranges = [];
+  for (const term of terms) {
+    let i = folded.indexOf(term);
+    while (i !== -1 && term) { ranges.push([i, i + term.length]); i = folded.indexOf(term, i + term.length); }
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  let out = '', pos = 0;
+  for (const [a, b] of ranges) {
+    if (a < pos) continue;
+    out += escapeHtml(src.slice(pos, a)) + '<mark>' + escapeHtml(src.slice(a, b)) + '</mark>';
+    pos = b;
+  }
+  return out + escapeHtml(src.slice(pos));
+}
+
+function searchTasks(query) {
+  const terms = foldText(query).split(/\s+/).filter(Boolean);
+  if (!terms.length || !currentState) return { terms, results: [] };
+  const dayIdx = new Map(currentState.days.map((d, i) => [d.id, i]));
+  const slotIdx = new Map(currentState.slots.map((s, i) => [s.id, i]));
+  const results = [];
+  for (const t of currentState.tasks) {
+    const d = t.details || {};
+    const inTitle = searchScope !== 'details';
+    const inDetails = searchScope !== 'title';
+    const parts = [];
+    if (inTitle) parts.push(t.text);
+    if (inDetails) parts.push(...SEARCH_FIELDS.map(([f]) => d[f]));
+    const haystack = foldText(parts.join('\n'));
+    if (!terms.every((term) => haystack.includes(term))) continue;
+    let snippet = '';
+    if (inDetails && !(inTitle && terms.every((term) => foldText(t.text).includes(term)))) {
+      for (const [f, label] of SEARCH_FIELDS) {
+        const v = String(d[f] || '');
+        const fv = foldText(v);
+        const hit = terms.map((term) => fv.indexOf(term)).filter((i) => i !== -1).sort((a, b) => a - b)[0];
+        if (hit === undefined) continue;
+        const start = Math.max(0, v.lastIndexOf('\n', hit) + 1, hit - 60);
+        let end = v.indexOf('\n', hit); if (end === -1 || end - hit > 110) end = Math.min(v.length, hit + 110);
+        snippet = `${label} : ${start > 0 && v[start - 1] !== '\n' ? '…' : ''}${v.slice(start, end).trim()}${end < v.length && v[end] !== '\n' ? '…' : ''}`;
+        break;
+      }
+    }
+    results.push({ t, snippet, rank: [terms.every((term) => foldText(t.text).includes(term)) ? 0 : 1, dayIdx.get(t.dayId) ?? 99, slotIdx.get(t.slotId) ?? 99, t.order ?? 0] });
+  }
+  results.sort((a, b) => { for (let i = 0; i < 4; i++) if (a.rank[i] !== b.rank[i]) return a.rank[i] - b.rank[i]; return 0; });
+  return { terms, results };
+}
+
+function renderSearchResults() {
+  const box = $('search-results');
+  if (!box) return;
+  $('search-clear').style.display = searchQuery ? '' : 'none';
+  if (!searchQuery.trim()) { box.style.display = 'none'; box.innerHTML = ''; applySearchHighlight(); return; }
+  const { terms, results } = searchTasks(searchQuery);
+  const days = new Map(currentState.days.map((d) => [d.id, d]));
+  const slots = new Map(currentState.slots.map((s) => [s.id, s]));
+  let html = `<div class="sr-count">${results.length} résultat${results.length > 1 ? 's' : ''}</div>`;
+  if (!results.length) {
+    const hint = searchScope === 'title' ? ' dans les titres. Essayez « Fiche » ou « Les deux ».'
+      : searchScope === 'details' ? ' dans les fiches. Essayez « Titre » ou « Les deux ».' : '.';
+    html += `<div class="sr-empty">Aucun temps ne correspond à cette recherche${hint}</div>`;
+  }
+  for (const { t, snippet } of results.slice(0, 60)) {
+    const d = days.get(t.dayId), sl = slots.get(t.slotId), h = horaireOf(t);
+    const where = [d && `${d.short} ${d.name}`, sl && sl.label, h].filter(Boolean).join(' · ');
+    html += `<button type="button" class="sr-item" data-search-task="${escapeHtml(t.id)}">
+      <span class="sr-where">${escapeHtml(where)}</span>
+      <span class="sr-text">${markTerms(t.text, terms)}</span>
+      ${snippet ? `<span class="sr-snippet">${markTerms(snippet, terms)}</span>` : ''}
+    </button>`;
+  }
+  box.innerHTML = html;
+  box.style.display = '';
+  applySearchHighlight();
+}
+
+// Dims the tasks that do not match, in the table and in the day view.
+function applySearchHighlight() {
+  const active = !!searchQuery.trim() && !!currentState;
+  document.body.classList.toggle('searching', active);
+  const ids = active ? new Set(searchTasks(searchQuery).results.map((r) => r.t.id)) : new Set();
+  document.querySelectorAll('li.task[data-task-id]').forEach((li) => li.classList.toggle('search-hit', ids.has(li.dataset.taskId)));
+}
+
+function goToSearchResult(taskId) {
+  const t = currentState && currentState.tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  $('search-results').style.display = 'none';
+  if (showDetailsButton(t)) { openDetailsModal(taskId); return; }
+  const mobile = window.matchMedia('(max-width: 720px)').matches;
+  if (mobile && t.dayId !== dayViewDayId) setDayViewDay(t.dayId);
+  const scope = mobile ? '#day-view' : '#planning-table';
+  const li = document.querySelector(`${scope} li.task[data-task-id="${CSS.escape(taskId)}"]`);
+  if (li) li.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+}
+
+function renderSearchScope() {
+  document.querySelectorAll('#search-scope [data-scope]').forEach((b) => {
+    const on = b.dataset.scope === searchScope;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
+function clearSearch() {
+  searchQuery = '';
+  const input = $('search-input');
+  if (input) input.value = '';
+  renderSearchResults();
+}
+
+function initSearch() {
+  const input = $('search-input');
+  if (!input) return;
+  let timer = null;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { searchQuery = input.value; renderSearchResults(); }, 120);
+  });
+  input.addEventListener('focus', () => { if (searchQuery.trim()) renderSearchResults(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { clearSearch(); input.blur(); }
+    if (e.key === 'Enter') {
+      const first = $('search-results').querySelector('[data-search-task]');
+      if (first) { e.preventDefault(); input.blur(); goToSearchResult(first.dataset.searchTask); }
+    }
+  });
+  $('search-clear').addEventListener('click', () => { clearSearch(); input.focus(); });
+  renderSearchScope();
+  $('search-scope').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-scope]');
+    if (!b) return;
+    searchScope = b.dataset.scope;
+    try { localStorage.setItem('planning.searchScope', searchScope); } catch {}
+    renderSearchScope();
+    renderSearchResults();
+  });
+  $('search-results').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-search-task]');
+    if (b) goToSearchResult(b.dataset.searchTask);
+  });
+  // Close the result list when tapping elsewhere (the highlight stays).
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#search-bar')) $('search-results').style.display = 'none';
+  });
+}
+
+// ── VISIONNEUSE DE DOCUMENTS ───────────────────────────────────
+// Opens the Anima resources linked in a fiche inside the app.  PDFs are
+// fetched through /api/doc (Anima's servers do not let other sites read
+// them) and drawn with pdf.js, which also works on phones; images and
+// videos load directly; Office files use Microsoft's online viewer.
+const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+let pdfjsPromise = null;
+let docViewerToken = 0;
+
+function docKind(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const name = (u.searchParams.get('name') || u.pathname).toLowerCase();
+  const ext = (name.match(/\.([a-z0-9]+)$/) || [])[1] || '';
+  if (ext === 'pdf') return 'pdf';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'image';
+  if (['mp4', 'webm', 'mov'].includes(ext)) return 'video';
+  if (['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx'].includes(ext)) return 'office';
+  return null;
+}
+
+function loadPdfJs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import(PDFJS_URL).then((lib) => {
+      lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
+      return lib;
+    }).catch((e) => { pdfjsPromise = null; throw e; });
+  }
+  return pdfjsPromise;
+}
+
+function docMessage(html) {
+  $('doc-body').innerHTML = `<div class="doc-msg">${html}</div>`;
+}
+
+async function renderPdfInto(url, token) {
+  const body = $('doc-body');
+  docMessage('<div class="spinner"></div><p style="margin-top:12px">Chargement du document…</p>');
+  const res = await fetch('/api/doc?url=' + encodeURIComponent(url), { credentials: 'same-origin' });
+  if (!res.ok) throw new Error((await res.text().catch(() => '')) || 'Document indisponible');
+  const [lib, data] = await Promise.all([loadPdfJs(), res.arrayBuffer()]);
+  if (token !== docViewerToken) return;
+  const pdf = await lib.getDocument({ data }).promise;
+  if (token !== docViewerToken) return;
+  body.innerHTML = '';
+  const width = Math.max(280, body.clientWidth - 16);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  for (let i = 1; i <= pdf.numPages; i++) {
+    if (token !== docViewerToken) return;
+    const page = await pdf.getPage(i);
+    const base = page.getViewport({ scale: 1 });
+    const viewport = page.getViewport({ scale: (width / base.width) * dpr });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    canvas.style.width = Math.floor(viewport.width / dpr) + 'px';
+    body.appendChild(canvas);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  }
+}
+
+async function openDocViewer(url, title) {
+  const kind = docKind(url);
+  if (!kind) { window.open(url, '_blank', 'noopener'); return; }
+  const token = ++docViewerToken;
+  $('doc-title').textContent = title || 'Document';
+  $('doc-open').href = url;
+  $('doc-modal').classList.remove('hidden');
+  const body = $('doc-body');
+  body.scrollTop = 0;
+  try {
+    if (kind === 'pdf') {
+      await renderPdfInto(url, token);
+    } else if (kind === 'image') {
+      body.innerHTML = '';
+      const img = document.createElement('img');
+      img.alt = title || '';
+      img.src = url;
+      body.appendChild(img);
+    } else if (kind === 'video') {
+      body.innerHTML = '';
+      const v = document.createElement('video');
+      v.controls = true; v.playsInline = true; v.preload = 'metadata'; v.src = url;
+      body.appendChild(v);
+    } else {
+      body.innerHTML = '';
+      const f = document.createElement('iframe');
+      f.title = title || 'Document';
+      f.src = 'https://view.officeapps.live.com/op/embed.aspx?src=' + encodeURIComponent(url);
+      body.appendChild(f);
+    }
+  } catch (e) {
+    if (token !== docViewerToken) return;
+    docMessage(`Impossible d'afficher ce document ici (${escapeHtml(e.message || 'erreur')}).<br><br><a href="${escapeHtml(url)}" target="_blank" rel="noopener">Ouvrir le document à part ↗</a>`);
+  }
+}
+
+function closeDocViewer() {
+  docViewerToken++;
+  $('doc-modal').classList.add('hidden');
+  $('doc-body').innerHTML = '';
+}
+
+function initDocViewer() {
+  const read = $('details-read');
+  if (read) {
+    read.addEventListener('click', (e) => {
+      const a = e.target.closest('a[href]');
+      if (!a || !docKind(a.href)) return;
+      e.preventDefault();
+      openDocViewer(a.href, a.textContent.trim());
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('doc-modal').classList.contains('hidden')) closeDocViewer();
+  });
+}
+
+window.closeDocViewer = closeDocViewer;
+window.addEventListener('DOMContentLoaded', () => { initSearch(); initDocViewer(); });
+
+
+// ── Appliquer des modifications ────────────────────────────────────────
+// The owner pastes a block of changes (prepared by Claude, for instance),
+// checks the list of what will change, then applies it.  Each change goes
+// through the normal API with the owner's own session, one op at a time.
+//
+// Format:
+// { "titre": "…", "modifs": [
+//   { "type": "renommer",  "tache": "Titre actuel", "jour": "J1", "titre": "Nouveau titre" },
+//   { "type": "fiche",     "tache": "…", "fiche": { "horaire": "9h50 - 10h45 (55 min)", "objectifs": "…" } },
+//   { "type": "ajouter",   "jour": "J1", "creneau": "aprem", "titre": "…", "apres": "Titre voisin", "fiche": { … } },
+//   { "type": "deplacer",  "tache": "…", "vers": { "jour": "J2", "creneau": "matin", "apres": "…" } },
+//   { "type": "supprimer", "tache": "…" } ] }
+// "tache" is matched on the title (accents and case ignored): exact title
+// first, then the beginning of the title, then any part of it.  "jour"
+// narrows the search to one day.  "apres" places the block after another
+// one of the same cell ("debut" puts it first); default: end of the cell.
+
+const BATCH_FICHE_FIELDS = ['resume', 'duree', 'objectifs', 'deroule', 'materiel', 'notes', 'ficheAnima', 'statut', 'formateurs'];
+let batchPlan = null;
+
+function openBatchModal() {
+  if (!currentState) return;
+  $('batch-modal').classList.remove('hidden');
+  $('batch-error').textContent = '';
+  $('batch-preview').innerHTML = '';
+  $('batch-input-wrap').style.display = '';
+  $('batch-check').style.display = '';
+  $('batch-apply').disabled = true;
+  batchPlan = null;
+}
+
+function closeBatchModal() { $('batch-modal').classList.add('hidden'); }
+
+function batchDayId(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const k = foldText(raw).replace(/\s+/g, '');
+  const d = currentState.days.find((x) => x.id === k || foldText(x.short) === k || foldText(x.name) === k);
+  if (!d) throw new Error('Jour inconnu : ' + raw);
+  return d.id;
+}
+
+function batchSlotId(raw) {
+  const k = foldText(raw).replace(/[\s-]+/g, '');
+  const map = { matin: 'matin', aprem: 'aprem', apresmidi: 'aprem', veillee: 'veillee', soir: 'veillee' };
+  if (!map[k]) throw new Error('Créneau inconnu : ' + raw + ' (matin, aprem ou veillee)');
+  return map[k];
+}
+
+function batchFind(tasks, title, dayId) {
+  const q = foldText(title).trim();
+  if (!q) throw new Error('Titre de tâche manquant');
+  const pool = tasks.filter((t) => !dayId || t.dayId === dayId);
+  for (const test of [(t) => t === q, (t) => t.startsWith(q), (t) => t.includes(q)]) {
+    const hits = pool.filter((t) => test(foldText(t.text).trim()));
+    if (hits.length === 1) return hits[0];
+    if (hits.length > 1) throw new Error('« ' + title + ' » correspond à ' + hits.length + ' temps, précisez le jour ou le titre');
+  }
+  throw new Error('Temps introuvable : « ' + title + ' »' + (dayId ? ' (' + dayId.toUpperCase() + ')' : ''));
+}
+
+function batchCell(tasks, dayId, slotId, exceptId) {
+  return tasks.filter((t) => t.dayId === dayId && t.slotId === slotId && t.id !== exceptId)
+    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+// Index in the destination cell (without the moved block) for "apres".
+function batchIndex(tasks, dayId, slotId, apres, exceptId) {
+  const cell = batchCell(tasks, dayId, slotId, exceptId);
+  if (apres === undefined || apres === null || apres === '') return cell.length;
+  if (foldText(apres) === 'debut') return 0;
+  const ref = batchFind(cell, apres, null);
+  return cell.indexOf(ref) + 1;
+}
+
+function batchPlace(tasks, task, dayId, slotId, index) {
+  const cell = batchCell(tasks, dayId, slotId, task.id);
+  task.dayId = dayId; task.slotId = slotId;
+  cell.splice(index, 0, task);
+  cell.forEach((t, i) => { t.order = i; });
+}
+
+function batchFichePatch(fiche, current) {
+  if (!fiche || typeof fiche !== 'object') throw new Error('« fiche » doit être un objet');
+  const patch = {};
+  for (const [k, v] of Object.entries(fiche)) {
+    if (k === 'horaire') continue;
+    if (!BATCH_FICHE_FIELDS.includes(k)) throw new Error('Champ de fiche inconnu : ' + k);
+    patch[k] = v;
+  }
+  if (fiche.horaire) {
+    const line = 'Horaire conseillé : ' + String(fiche.horaire).trim();
+    const base = patch.deroule !== undefined ? String(patch.deroule) : String((current && current.deroule) || '');
+    patch.deroule = /^Horaire conseillé/.test(base) ? base.replace(/^[^\n]*/, line) : (base ? line + '\n\n' + base : line);
+  }
+  return patch;
+}
+
+// Resolve every change against a copy of the planning, in order, so a
+// later change can refer to a block renamed or added by an earlier one.
+function buildBatchPlan(data) {
+  if (!data || !Array.isArray(data.modifs) || !data.modifs.length) throw new Error('Aucune modification (« modifs » vide)');
+  if (data.modifs.length > 200) throw new Error('Trop de modifications d\'un coup (200 maximum)');
+  const sim = currentState.tasks.map((t) => ({ id: t.id, text: t.text, dayId: t.dayId, slotId: t.slotId, order: t.order, details: t.details }));
+  let tmp = 0;
+  const steps = data.modifs.map((m, i) => {
+    const step = { n: i + 1, raw: m, label: '', detail: '', error: null };
+    try {
+      const type = foldText(m.type || '');
+      if (type === 'renommer') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        const text = String(m.titre || '').trim();
+        if (!text) throw new Error('Nouveau titre manquant');
+        step.label = 'Renommer « ' + t.text + ' »';
+        step.detail = '→ « ' + text + ' »';
+        step.op = { kind: 'edit', ref: t.id, text };
+        t.text = text;
+        if (m.fiche) { step.patch = batchFichePatch(m.fiche, t.details); step.detail += ' + fiche (' + Object.keys(step.patch).join(', ') + ')'; }
+      } else if (type === 'fiche') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        step.patch = batchFichePatch(m.fiche, t.details);
+        step.label = 'Fiche de « ' + t.text + ' »';
+        step.detail = 'Champs : ' + Object.keys(step.patch).join(', ');
+        step.op = { kind: 'fiche', ref: t.id };
+        t.details = { ...(t.details || {}), ...step.patch };
+      } else if (type === 'ajouter') {
+        const dayId = batchDayId(m.jour);
+        if (!dayId) throw new Error('Jour manquant');
+        const slotId = batchSlotId(m.creneau || '');
+        const text = String(m.titre || '').trim();
+        if (!text) throw new Error('Titre manquant');
+        const index = batchIndex(sim, dayId, slotId, m.apres, null);
+        const t = { id: 'new:' + (++tmp), text, dayId, slotId, order: 0 };
+        sim.push(t);
+        batchPlace(sim, t, dayId, slotId, index);
+        if (m.fiche) step.patch = batchFichePatch(m.fiche, null);
+        step.label = 'Ajouter « ' + text + ' »';
+        step.detail = dayId.toUpperCase() + ' ' + slotId + (m.apres ? ', après « ' + m.apres + ' »' : '') + (step.patch ? ' + fiche' : '');
+        step.op = { kind: 'add', ref: t.id, text, dayId, slotId, index };
+      } else if (type === 'deplacer') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        const to = m.vers || {};
+        const dayId = batchDayId(to.jour) || t.dayId;
+        const slotId = to.creneau ? batchSlotId(to.creneau) : t.slotId;
+        const index = batchIndex(sim, dayId, slotId, to.apres, t.id);
+        step.label = 'Déplacer « ' + t.text + ' »';
+        step.detail = '→ ' + dayId.toUpperCase() + ' ' + slotId + (to.apres ? ', après « ' + to.apres + ' »' : '');
+        step.op = { kind: 'move', ref: t.id, dayId, slotId, index };
+        batchPlace(sim, t, dayId, slotId, index);
+      } else if (type === 'supprimer') {
+        const t = batchFind(sim, m.tache, batchDayId(m.jour));
+        step.label = 'Supprimer « ' + t.text + ' »';
+        step.detail = t.dayId.toUpperCase() + ' ' + t.slotId;
+        step.op = { kind: 'remove', ref: t.id };
+        sim.splice(sim.indexOf(t), 1);
+        batchCell(sim, t.dayId, t.slotId).forEach((x, k) => { x.order = k; });
+      } else {
+        throw new Error('Type inconnu : « ' + (m.type || '') + ' » (renommer, fiche, ajouter, deplacer, supprimer)');
+      }
+    } catch (e) {
+      step.error = e.message;
+    }
+    return step;
+  });
+  return { titre: String(data.titre || ''), steps };
+}
+
+function renderBatchPlan() {
+  const { titre, steps } = batchPlan;
+  const errs = steps.filter((s) => s.error).length;
+  $('batch-preview').innerHTML =
+    '<h4>' + escapeHtml(titre || 'Modifications') + ' · ' + steps.length + ' changement' + (steps.length > 1 ? 's' : '') + '</h4>' +
+    steps.map((s) => '<div class="batch-row' + (s.error ? ' err' : '') + (s.done ? ' done' : '') + '">' +
+      '<span class="batch-ico">' + (s.error ? '⚠️' : s.done ? '✅' : s.n) + '</span>' +
+      '<span>' + escapeHtml(s.error ? 'Modif ' + s.n + ' : ' + s.error : s.label) +
+      (s.error ? '' : '<small>' + escapeHtml(s.detail) + '</small>') + '</span></div>').join('');
+  $('batch-error').textContent = errs ? errs + ' modification(s) à corriger : rien ne sera appliqué tant qu\'il y a une erreur.' : '';
+  $('batch-apply').disabled = !!errs || steps.every((s) => s.done);
+}
+
+function previewBatch() {
+  $('batch-error').textContent = '';
+  let data;
+  const raw = $('batch-input').value.trim().replace(/^```\w*\s*|\s*```$/g, '').replace(/[“”]/g, '"');
+  try { data = JSON.parse(raw); } catch (e) {
+    $('batch-error').textContent = 'Le texte collé n\'est pas un bloc valide (copiez tout le bloc, accolades comprises).';
+    return;
+  }
+  try { batchPlan = buildBatchPlan(data); } catch (e) {
+    $('batch-error').textContent = e.message;
+    return;
+  }
+  renderBatchPlan();
+}
+
+async function applyBatch() {
+  if (!batchPlan || batchPlan.steps.some((s) => s.error)) return;
+  $('batch-apply').disabled = true;
+  $('batch-check').style.display = 'none';
+  $('batch-input-wrap').style.display = 'none';
+  const ids = {};
+  const real = (ref) => (ref.startsWith('new:') ? ids[ref] : ref);
+  for (const s of batchPlan.steps) {
+    if (s.done) continue;
+    try {
+      const o = s.op;
+      if (o.kind === 'edit') {
+        await pushOp({ op: 'edit', taskId: real(o.ref), text: o.text });
+      } else if (o.kind === 'add') {
+        const before = new Set(currentState.tasks.map((t) => t.id));
+        const next = await pushOp({ op: 'add', dayId: o.dayId, slotId: o.slotId, text: o.text });
+        const created = next.tasks.find((t) => !before.has(t.id));
+        if (!created) throw new Error('Bloc ajouté introuvable');
+        ids[o.ref] = created.id;
+        await pushOp({ op: 'move', taskId: created.id, dayId: o.dayId, slotId: o.slotId, index: o.index });
+      } else if (o.kind === 'move') {
+        await pushOp({ op: 'move', taskId: real(o.ref), dayId: o.dayId, slotId: o.slotId, index: o.index });
+      } else if (o.kind === 'remove') {
+        await pushOp({ op: 'remove', taskId: real(o.ref) });
+      }
+      if (s.patch && Object.keys(s.patch).length) {
+        await pushOp({ op: 'setDetails', taskId: real(o.ref), details: s.patch });
+      }
+      s.done = true;
+    } catch (e) {
+      s.error = 'non appliquée (' + (e.message || 'erreur') + ')';
+      renderBatchPlan();
+      $('batch-error').textContent = 'Arrêt à la modification ' + s.n + '. Les précédentes sont enregistrées.';
+      return;
+    }
+    renderBatchPlan();
+  }
+  $('batch-error').textContent = '';
+  $('batch-preview').insertAdjacentHTML('beforeend', '<p><strong>Tout est appliqué ✅</strong></p>');
 }

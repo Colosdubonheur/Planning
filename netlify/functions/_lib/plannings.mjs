@@ -148,6 +148,19 @@ export async function listPlanningsForUser(user) {
     const meta = index.plannings[id];
     if (meta) out.push(toPublicMeta(meta));
   }
+  // Add each planning's dates so the frontend can open the one in progress.
+  await Promise.all(out.map(async (p) => {
+    try {
+      const state = await store.get(stateKey(p.id), { type: "json" });
+      if (!isValidState(state)) return;
+      p.startDate = state.startDate || null;
+      p.dayCount = state.days.length;
+      // Legacy plannings have no startDate: send J1 so the client can infer it.
+      if (!p.startDate && state.days[0]) {
+        p.firstDay = { name: state.days[0].name, date: state.days[0].date };
+      }
+    } catch {}
+  }));
   out.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   return out;
 }

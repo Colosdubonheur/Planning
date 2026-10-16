@@ -46,6 +46,9 @@
     border-radius: 10px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.12);
     overflow: hidden;
+    /* clip (not hidden): not a scroll container, so it can't be scrolled
+       programmatically and sticky day tabs stick to the viewport. */
+    overflow: clip;
   }
 
   /* ── HEADER ─────────────────────────────────────────────────── */
@@ -593,6 +596,73 @@
   .gate-submit:hover { background: var(--blue-ac); }
   .gate-submit:disabled { background: #AAA; cursor: wait; }
 
+
+  /* ── LOADING ──────────────────────────────────────────────── */
+  .loading-state { padding: 70px 24px; text-align: center; color: #667; }
+  .loading-state.hidden { display: none; }
+  body.planning-loading .day-view, body.planning-loading .legend { display: none !important; }
+  .loading-state p { font-size: 11pt; font-weight: 700; color: var(--navy); margin-top: 14px; }
+  .spinner {
+    width: 38px; height: 38px; margin: 0 auto;
+    border: 4px solid var(--border); border-top-color: var(--navy);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── SEARCH ───────────────────────────────────────────────── */
+  .search-bar { position: relative; margin: 10px 0; }
+  .search-box {
+    display: flex; align-items: center; gap: 8px;
+    background: white; border: 1.5px solid var(--border); border-radius: 10px; padding: 0 10px;
+  }
+  .search-box:focus-within { border-color: var(--navy); }
+  .search-icon { font-size: 12pt; opacity: 0.6; }
+  .search-box input {
+    flex: 1; border: none; outline: none; background: transparent;
+    padding: 10px 0; font-family: 'Nunito', sans-serif; font-size: 16px; color: var(--text);
+  }
+  .search-box input::-webkit-search-cancel-button { display: none; }
+  .search-clear { border: none; background: none; font-size: 12pt; color: #889; cursor: pointer; padding: 6px; }
+  .search-scope { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 8.5pt; color: #667; flex-wrap: wrap; }
+  .search-scope button {
+    border: 1.5px solid var(--border); background: white; color: var(--navy); border-radius: 999px;
+    padding: 4px 11px; font-family: 'Nunito', sans-serif; font-size: 9pt; font-weight: 700; cursor: pointer;
+  }
+  .search-scope button.active { background: var(--navy); border-color: var(--navy); color: white; }
+  .search-results {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 800;
+    background: white; border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.18); max-height: 60vh; overflow-y: auto;
+  }
+  .sr-count { padding: 8px 12px; font-size: 8.5pt; color: #778; border-bottom: 1px solid var(--border); }
+  .sr-item {
+    display: block; width: 100%; text-align: left; border: none; background: none; cursor: pointer;
+    padding: 10px 12px; border-bottom: 1px solid #EEF2F7; font-family: 'Nunito', sans-serif;
+  }
+  .sr-item:hover, .sr-item:focus { background: #F3F7FB; outline: none; }
+  .sr-where { display: block; font-size: 8pt; font-weight: 700; color: var(--amber); text-transform: uppercase; letter-spacing: .3px; }
+  .sr-text { display: block; font-size: 10pt; font-weight: 700; color: var(--navy); margin-top: 2px; }
+  .sr-snippet { display: block; font-size: 9pt; color: #556; margin-top: 3px; line-height: 1.4; }
+  .search-results mark { background: #FFE8A3; color: inherit; border-radius: 2px; padding: 0 1px; }
+  .sr-empty { padding: 14px 12px; font-size: 9.5pt; color: #778; }
+  body.searching li.task:not(.search-hit), body.searching .dv-item:not(.search-hit) { opacity: 0.35; }
+  li.task.search-hit, .dv-item.search-hit { box-shadow: inset 0 0 0 2px var(--amber); border-radius: 4px; }
+
+  /* ── DOCUMENT VIEWER ─────────────────────────────────────── */
+  #doc-modal .doc-card { max-width: 900px; width: calc(100vw - 32px); height: 90vh; max-height: 90vh; display: flex; flex-direction: column; padding: 12px 14px; }
+  .doc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .doc-head h3 { flex: 1; margin: 0; font-size: 12pt; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .doc-open { font-size: 9pt; font-weight: 700; color: var(--navy); white-space: nowrap; }
+  .doc-close { border: none; background: #EEF2F7; border-radius: 6px; font-size: 12pt; padding: 6px 10px; cursor: pointer; }
+  .doc-body { flex: 1; overflow: auto; background: #E9EEF4; border-radius: 6px; -webkit-overflow-scrolling: touch; }
+  .doc-body canvas, .doc-body img, .doc-body video { display: block; max-width: 100%; height: auto; margin: 8px auto; background: white; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
+  .doc-body iframe { width: 100%; height: 100%; border: none; background: white; }
+  .doc-msg { padding: 40px 20px; text-align: center; color: #556; font-size: 10pt; line-height: 1.6; }
+  .dr-body a.doc-link::after { content: " 👁"; font-size: 8pt; }
+  @media (max-width: 720px) {
+    #doc-modal { padding: 0; }
+    #doc-modal .doc-card { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; border-radius: 0; }
+  }
   /* ── MODAL (users management, edit, move) ──────────────────── */
   .modal-backdrop {
     position: fixed;
@@ -729,6 +799,14 @@
     font-size: 10pt;
     padding: 4px 6px;
   }
+  #batch-modal .modal-card { max-width: 640px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
+  #batch-input { width: 100%; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  #batch-preview h4 { margin: 10px 0 6px; font-size: 14px; }
+  .batch-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #EEE; font-size: 13px; }
+  .batch-row .batch-ico { flex: none; width: 20px; text-align: center; }
+  .batch-row.err { color: #B00020; }
+  .batch-row.done { opacity: 0.55; }
+  .batch-row small { display: block; color: #666; }
   .modal-error {
     color: #D33;
     font-size: 8.5pt;
@@ -1260,6 +1338,40 @@
   </div>
 </div>
 
+<div class="modal-backdrop hidden" id="batch-modal">
+  <div class="modal-card">
+    <h3>📋 Appliquer des modifications</h3>
+    <div class="modal-field" id="batch-input-wrap">
+      <label for="batch-input">Collez ici le bloc de modifications</label>
+      <textarea id="batch-input" rows="6" placeholder='{ "titre": "…", "modifs": [ … ] }'></textarea>
+    </div>
+    <div id="batch-preview"></div>
+    <div class="modal-error" id="batch-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeBatchModal()">Fermer</button>
+      <button class="modal-btn ghost" type="button" id="batch-check" onclick="previewBatch()">Vérifier</button>
+      <button class="modal-btn primary" type="button" id="batch-apply" onclick="applyBatch()" disabled>Appliquer</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="horaire-modal">
+  <div class="modal-card">
+    <h3>Changer l'horaire ?</h3>
+    <p id="horaire-task" style="font-weight:700;margin-bottom:2px"></p>
+    <p id="horaire-current" style="color:#667;font-size:9pt;margin-bottom:10px"></p>
+    <div style="display:flex;gap:8px">
+      <div class="modal-field" style="flex:1"><label for="horaire-start">Début</label><input type="time" id="horaire-start" step="300"></div>
+      <div class="modal-field" style="flex:1"><label for="horaire-end">Fin</label><input type="time" id="horaire-end" step="300"></div>
+    </div>
+    <div class="modal-error" id="horaire-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeHoraireModal()">Garder l'horaire</button>
+      <button class="modal-btn primary" type="button" onclick="saveHoraire()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="edit-modal">
   <div class="modal-card">
     <h3 id="edit-modal-title">Modifier la tâche</h3>
@@ -1279,6 +1391,18 @@
       <button class="modal-btn ghost" type="button" onclick="closeEditModal()">Annuler</button>
       <button class="modal-btn primary" type="button" id="edit-save-btn">Enregistrer</button>
     </div>
+  </div>
+</div>
+
+<!-- DOCUMENT VIEWER -->
+<div class="modal-backdrop hidden" id="doc-modal" onclick="if(event.target===this)closeDocViewer()">
+  <div class="modal-card doc-card">
+    <div class="doc-head">
+      <h3 id="doc-title">Document</h3>
+      <a id="doc-open" class="doc-open" href="#" target="_blank" rel="noopener">Ouvrir à part ↗</a>
+      <button type="button" class="doc-close" onclick="closeDocViewer()" aria-label="Fermer">✕</button>
+    </div>
+    <div class="doc-body" id="doc-body"></div>
   </div>
 </div>
 
@@ -1303,6 +1427,7 @@
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
         <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
         <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
+        <button type="button" id="btn-batch" title="Appliquer des modifications" onclick="openBatchModal()">📋</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
       </div>
       <div class="sync-badge" id="sync-badge">
@@ -1324,6 +1449,28 @@
       <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
       <button class="btn-logout" id="btn-logout" style="display:none" onclick="logout()">⇦ <span class="btn-label">Quitter</span></button>
     </div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="search-bar no-print" id="search-bar" style="display:none">
+    <div class="search-box">
+      <span class="search-icon" aria-hidden="true">🔍</span>
+      <input type="search" id="search-input" placeholder="Rechercher un temps, un thème, un document…" autocomplete="off" enterkeyhint="search" aria-label="Rechercher dans le planning">
+      <button type="button" class="search-clear" id="search-clear" aria-label="Effacer la recherche" style="display:none">✕</button>
+    </div>
+    <div class="search-scope" id="search-scope" role="radiogroup" aria-label="Où chercher">
+      <span>Chercher dans :</span>
+      <button type="button" data-scope="title" role="radio">Titre</button>
+      <button type="button" data-scope="details" role="radio">Fiche</button>
+      <button type="button" data-scope="both" role="radio">Les deux</button>
+    </div>
+    <div class="search-results" id="search-results" style="display:none"></div>
+  </div>
+
+  <!-- LOADING (until the planning has been fetched) -->
+  <div id="loading-state" class="loading-state">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Chargement du planning…</p>
   </div>
 
   <!-- EMPTY STATE (shown when the user has no accessible planning) -->
