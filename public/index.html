@@ -46,6 +46,9 @@
     border-radius: 10px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.12);
     overflow: hidden;
+    /* clip (not hidden): not a scroll container, so it can't be scrolled
+       programmatically and sticky day tabs stick to the viewport. */
+    overflow: clip;
   }
 
   /* ── HEADER ─────────────────────────────────────────────────── */

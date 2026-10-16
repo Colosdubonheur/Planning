@@ -779,7 +779,9 @@ function setDayViewDay(id) {
   try { localStorage.setItem(dayStorageKey(), id); } catch {}
   renderDayView();
   const dv = $('day-view');
-  if (dv) window.scrollTo({ top: Math.max(0, dv.getBoundingClientRect().top + window.scrollY - 4) });
+  // Only bring the day back into view if the user had scrolled past its top,
+  // so the header menu stays reachable.
+  if (dv && dv.getBoundingClientRect().top < 0) window.scrollTo({ top: dv.getBoundingClientRect().top + window.scrollY });
 }
 
 function renderDayView() {
@@ -822,8 +824,11 @@ function renderDayView() {
     + (idx < days.length - 1 ? `<button type="button" data-dv-day="${escapeHtml(days[idx + 1].id)}">${escapeHtml(days[idx + 1].short)} ${escapeHtml(days[idx + 1].name)} ›</button>` : '<span></span>')
     + '</div></div>';
   dv.innerHTML = html;
+  // Center the active tab by scrolling the tab strip only: scrollIntoView
+  // would also scroll the page wrapper vertically and hide the header.
+  const tabs = dv.querySelector('.dv-tabs');
   const active = dv.querySelector('.dv-tab.active');
-  if (active) active.scrollIntoView({ block: 'nearest', inline: 'center' });
+  if (tabs && active) tabs.scrollLeft = active.offsetLeft - (tabs.clientWidth - active.offsetWidth) / 2;
 }
 
 function onDayViewClick(e) {
