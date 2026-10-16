@@ -778,6 +778,7 @@ function setDayViewDay(id) {
   dayViewDayId = id;
   try { localStorage.setItem(dayStorageKey(), id); } catch {}
   renderDayView();
+  initDragAndDrop();
   const dv = $('day-view');
   if (dv) window.scrollTo({ top: Math.max(0, dv.getBoundingClientRect().top + window.scrollY - 4) });
 }
@@ -803,7 +804,7 @@ function renderDayView() {
     if (slot.id === 'repas') { html += '<div class="dv-repas">🍽 Repas</div>'; continue; }
     const list = tasks.filter((t) => t.dayId === day.id && t.slotId === slot.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     if (!list.length && !(isEditor && editMode)) continue;
-    html += `<section class="dv-slot sl-${escapeHtml(slot.id)}"><h3>${DV_SLOT_ICON[slot.id] || ''} ${escapeHtml(slot.label)}</h3><ul class="tasks">`;
+    html += `<section class="dv-slot sl-${escapeHtml(slot.id)}"><h3>${DV_SLOT_ICON[slot.id] || ''} ${escapeHtml(slot.label)}</h3><ul class="tasks" data-day="${escapeHtml(day.id)}" data-slot="${escapeHtml(slot.id)}">`;
     for (const t of list) {
       const h = horaireOf(t);
       html += `<li class="task${t.done ? ' done' : ''}" data-task-id="${escapeHtml(t.id)}">
@@ -840,7 +841,7 @@ function onDayViewTouchStart(e) {
   dvTouch = { x: t.clientX, y: t.clientY };
 }
 function onDayViewTouchEnd(e) {
-  if (!dvTouch || !currentState) return;
+  if (!dvTouch || !currentState || isDragging) return;
   const t = e.changedTouches[0];
   const dx = t.clientX - dvTouch.x, dy = t.clientY - dvTouch.y;
   dvTouch = null;
@@ -863,7 +864,8 @@ function initDragAndDrop() {
   sortables = [];
   if (typeof Sortable === 'undefined') return;
   if (!editMode || !canEditContent()) return;
-  document.querySelectorAll('#planning-table td.cell ul.tasks').forEach((ul) => {
+  // Table on desktop, day view on phones (its lists carry data-day / data-slot).
+  document.querySelectorAll('#planning-table td.cell ul.tasks, #day-view ul.tasks[data-slot]').forEach((ul) => {
     sortables.push(Sortable.create(ul, {
       group: 'tasks',
       animation: 150,
@@ -871,12 +873,12 @@ function initDragAndDrop() {
       delayOnTouchOnly: true,
       ghostClass: 'drag-ghost',
       chosenClass: 'drag-chosen',
-      onStart() { isDragging = true; closeTaskMenu(); },
+      onStart() { isDragging = true; dvTouch = null; closeTaskMenu(); },
       async onEnd(evt) {
         isDragging = false;
         const taskId = evt.item && evt.item.dataset.taskId;
-        const cell = evt.to && evt.to.closest('td.cell');
-        if (!taskId || !cell) return;
+        const cell = evt.to && (evt.to.closest('td.cell') || evt.to);
+        if (!taskId || !cell || !cell.dataset.slot) return;
         if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
         try {
           await pushOp({
