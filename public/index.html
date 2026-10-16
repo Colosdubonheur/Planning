@@ -1355,6 +1355,23 @@
   </div>
 </div>
 
+<div class="modal-backdrop hidden" id="horaire-modal">
+  <div class="modal-card">
+    <h3>Changer l'horaire ?</h3>
+    <p id="horaire-task" style="font-weight:700;margin-bottom:2px"></p>
+    <p id="horaire-current" style="color:#667;font-size:9pt;margin-bottom:10px"></p>
+    <div style="display:flex;gap:8px">
+      <div class="modal-field" style="flex:1"><label for="horaire-start">Début</label><input type="time" id="horaire-start" step="300"></div>
+      <div class="modal-field" style="flex:1"><label for="horaire-end">Fin</label><input type="time" id="horaire-end" step="300"></div>
+    </div>
+    <div class="modal-error" id="horaire-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeHoraireModal()">Garder l'horaire</button>
+      <button class="modal-btn primary" type="button" onclick="saveHoraire()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="edit-modal">
   <div class="modal-card">
     <h3 id="edit-modal-title">Modifier la tâche</h3>
