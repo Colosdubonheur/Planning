@@ -1538,6 +1538,18 @@ function pickInitialPlanningId(list) {
   const stored = readStoredPlanningId();
   const ids = list.map((p) => p.id);
   if (urlId && ids.includes(urlId)) return urlId;
+  // Prefer the planning in progress today (latest start if several overlap).
+  const today = todayIso();
+  let current = null;
+  for (const p of list) {
+    const start = p.startDate || (p.firstDay ? inferStartDateFromState({ days: [p.firstDay] }) : '');
+    if (!start || !p.dayCount) continue;
+    const end = new Date(start + 'T12:00:00');
+    end.setDate(end.getDate() + p.dayCount - 1);
+    const endIso = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
+    if (start <= today && today <= endIso && (!current || start > current.start)) current = { id: p.id, start };
+  }
+  if (current) return current.id;
   if (stored && ids.includes(stored)) return stored;
   return list[0] ? list[0].id : null;
 }
