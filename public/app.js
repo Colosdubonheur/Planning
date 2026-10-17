@@ -843,16 +843,65 @@ function dayStorageKey() { return 'pb-day-' + (currentPlanningId || ''); }
 
 function defaultDayId() {
   const days = currentState.days;
+  // During the stage, open on today; otherwise on the last day viewed.
+  const today = todayDayId();
+  if (today) return today;
   try {
     const saved = localStorage.getItem(dayStorageKey());
     if (saved && days.some((d) => d.id === saved)) return saved;
   } catch {}
-  const start = currentState.startDate || inferStartDateFromState(currentState);
-  if (start) {
-    const i = Math.round((new Date(todayIso() + 'T12:00:00') - new Date(start + 'T12:00:00')) / 86400000);
-    if (i >= 0 && i < days.length) return days[i].id;
-  }
   return days[0] && days[0].id;
+}
+
+// ── "EN COURS" ─────────────────────────────────────────────────
+// Today's block whose time covers now (else the next one), from the
+// "Horaire conseillé" of each fiche.  Without times, falls back to the slot
+// matching the hour.
+function nowMinutes() { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+
+function currentTaskIds() {
+  const today = currentState && todayDayId();
+  if (!today) return { now: null, next: null };
+  const order = new Map(currentState.slots.map((s, i) => [s.id, i]));
+  const list = currentState.tasks
+    .filter((t) => t.dayId === today)
+    .map((t) => ({ t, h: parseHoraire(horaireOf(t)) }))
+    .filter((x) => x.h)
+    .sort((a, b) => a.h.start - b.h.start || (order.get(a.t.slotId) - order.get(b.t.slotId)));
+  const m = nowMinutes();
+  const now = list.find((x) => x.h.start <= m && m < (x.h.end != null ? x.h.end : x.h.start + 30));
+  const next = list.find((x) => x.h.start > m);
+  return { now: now ? now.t.id : null, next: next ? next.t.id : null };
+}
+
+function slotForNow() {
+  const m = nowMinutes();
+  return m < 12 * 60 + 15 ? 'matin' : m < 13 * 60 + 30 ? 'repas' : m < 19 * 60 ? 'aprem' : 'veillee';
+}
+
+function markNow() {
+  const { now } = currentTaskIds();
+  document.querySelectorAll('li.task.is-now').forEach((li) => { if (li.dataset.taskId !== now) li.classList.remove('is-now'); });
+  if (now) document.querySelectorAll(`li.task[data-task-id="${CSS.escape(now)}"]`).forEach((li) => li.classList.add('is-now'));
+}
+setInterval(markNow, 60000);
+
+// On opening a planning during the stage, scroll the day view to what's on now.
+let dvAutoScrolledFor = null;
+function scrollDayViewToNow() {
+  if (dvAutoScrolledFor === currentPlanningId) return;
+  const dv = $('day-view');
+  if (!dv || !dv.offsetParent || !currentState) return;
+  dvAutoScrolledFor = currentPlanningId;
+  if (dayViewDayId !== todayDayId()) return;
+  const { now, next } = currentTaskIds();
+  const id = now || next;
+  let target = id && dv.querySelector(`li.task[data-task-id="${CSS.escape(id)}"]`);
+  if (!target) target = dv.querySelector(`.dv-slot.sl-${slotForNow()}`) || (slotForNow() === 'repas' && dv.querySelector('.dv-repas'));
+  if (!target) return;
+  const bar = dv.querySelector('.dv-bar');
+  const top = target.getBoundingClientRect().top + window.scrollY - (bar ? bar.offsetHeight : 0) - 12;
+  window.scrollTo({ top: Math.max(0, top) });
 }
 
 function todayDayId() {
@@ -881,13 +930,15 @@ function renderDayView() {
   if (!days.some((d) => d.id === dayViewDayId)) dayViewDayId = defaultDayId();
   const today = todayDayId();
   const isEditor = canEditContent();
-  let html = '<div class="dv-tabs" role="tablist">';
+  let html = '<div class="dv-bar">';
+  if (isEditor) html += `<button type="button" class="dv-edit${editMode ? ' active' : ''}" onclick="toggleEditMode()" title="Modifier" aria-pressed="${editMode}">✎<small>${editMode ? 'Fini' : 'Modifier'}</small></button>`;
+  html += '<div class="dv-tabs" role="tablist">';
   for (const d of days) {
     const cls = (d.id === dayViewDayId ? ' active' : '') + (d.id === today ? ' today' : '');
     html += `<button type="button" class="dv-tab${cls}" data-dv-day="${escapeHtml(d.id)}" role="tab">
       <small>${escapeHtml(d.short || '')}</small><b>${escapeHtml((d.name || '').slice(0, 3))}</b><small>${escapeHtml(d.date || '')}</small></button>`;
   }
-  html += '</div><div class="dv-day">';
+  html += '</div></div><div class="dv-day">';
   const day = days.find((d) => d.id === dayViewDayId);
   html += `<div class="dv-title">${escapeHtml(day.short || '')} · ${escapeHtml(day.name || '')} ${escapeHtml(day.date || '')}</div>`;
   for (const slot of slots) {
@@ -899,7 +950,7 @@ function renderDayView() {
       const h = horaireOf(t);
       html += `<li class="task${t.done ? ' done' : ''}" data-task-id="${escapeHtml(t.id)}">
         <span class="chk" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" aria-label="Fait"></span>
-        <span class="task-text">${h ? `<span class="dv-time">${escapeHtml(h)}</span>` : ''}${escapeHtml(t.text)}${taskBadges(t)}</span>
+        <span class="task-text">${h ? `<span class="dv-time">${escapeHtml(h)}<span class="dv-now-badge">En cours</span></span>` : ''}${escapeHtml(t.text)}${taskBadges(t)}</span>
         ${showDetailsButton(t) ? '<span class="dv-go" aria-hidden="true">›</span>' : ''}
       </li>`;
     }
@@ -919,6 +970,8 @@ function renderDayView() {
   const tabs = dv.querySelector('.dv-tabs');
   const active = dv.querySelector('.dv-tab.active');
   if (tabs && active) tabs.scrollLeft = active.offsetLeft - (tabs.clientWidth - active.offsetWidth) / 2;
+  markNow();
+  scrollDayViewToNow();
 }
 
 function onDayViewClick(e) {
