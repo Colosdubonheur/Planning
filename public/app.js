@@ -93,13 +93,21 @@ function rememberPlanningId(id) {
 
 // ── TOAST ──────────────────────────────────────────────────────
 let toastTimer = null;
-function showToast(message) {
+function showToast(message, action) {
   const el = $('toast');
   if (!el) return;
   el.textContent = message;
+  el.classList.toggle('has-action', !!action);
+  if (action) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = action.label;
+    btn.onclick = () => { el.classList.remove('show'); action.run(); };
+    el.appendChild(btn);
+  }
   el.classList.add('show');
   if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), action ? 7000 : 2200);
 }
 
 async function sharePlanningUrl() {
@@ -190,6 +198,7 @@ function applyUserUI() {
   if (!currentUser) {
     $('user-chip').style.display = 'none';
     $('btn-users').style.display = 'none';
+    $('btn-trash').style.display = 'none';
     $('btn-reset').style.display = 'none';
     $('btn-logout').style.display = 'none';
     $('btn-edit-mode').style.display = 'none';
@@ -217,6 +226,7 @@ function applyUserUI() {
 
   // Edit mode (task content editing) is available to anyone assigned to the
   // current planning — both directeurs and formateurs need it.
+  $('btn-trash').style.display = canEditContent() ? '' : 'none';
   if (canEditContent()) {
     $('btn-edit-mode').style.display = '';
     $('btn-edit-mode').classList.toggle('active', editMode);
@@ -790,7 +800,7 @@ const fromTimeInput = (v) => { const m = /^(\d{1,2}):(\d{2})/.exec(v || ''); ret
 // After a move, offer to adjust the time: starts when the previous block
 // ends and keeps the block's duration.  Skipped when nothing has a time.
 let horaireTaskId = null;
-function offerHoraire(taskId) {
+function offerHoraire(taskId, force) {
   if (!currentState) return;
   const t = currentState.tasks.find((x) => x.id === taskId);
   if (!t) return;
@@ -801,9 +811,11 @@ function offerHoraire(taskId) {
   const own = parseHoraire(horaireOf(t));
   const prev = i > 0 ? parseHoraire(horaireOf(col[i - 1])) : null;
   const next = i < col.length - 1 ? parseHoraire(horaireOf(col[i + 1])) : null;
-  if (!own && !prev && !next) return;
+  if (!own && !prev && !next && !force) return;
   const dur = own && own.end != null && own.end > own.start ? own.end - own.start : 30;
-  let start = prev ? (prev.end != null ? prev.end : prev.start + 30) : next ? next.start : own.start;
+  // Asked from the menu: start from its own time; after a move: follow the previous block.
+  let start = force && own ? own.start
+    : prev ? (prev.end != null ? prev.end : prev.start + 30) : next ? next.start : own ? own.start : 9 * 60;
   start = Math.max(0, Math.min(start, 24 * 60 - dur));
   horaireTaskId = taskId;
   $('horaire-task').textContent = t.text;
@@ -1156,7 +1168,9 @@ function openTaskMenu(taskId, anchor) {
   if (canUp)   html += '<button type="button" data-menu-action="up">↑ Monter</button>';
   if (canDown) html += '<button type="button" data-menu-action="down">↓ Descendre</button>';
   html += '<button type="button" data-menu-action="move">⇄ Déplacer ailleurs</button>';
-  html += '<button type="button" class="danger" data-menu-action="remove">🗑 Supprimer</button>';
+  html += '<button type="button" data-menu-action="horaire">🕘 Changer l\'horaire</button>';
+  html += '<button type="button" data-menu-action="merge">⊕ Fusionner avec…</button>';
+  html += '<button type="button" class="danger" data-menu-action="remove">🗑 Mettre à la corbeille</button>';
   menu.innerHTML = html;
   document.body.appendChild(menu);
   const rect = anchor.getBoundingClientRect();
@@ -1178,6 +1192,8 @@ function openTaskMenu(taskId, anchor) {
     else if (action === 'rename') openEditModal(t);
     else if (action === 'move') openMoveModal(t);
     else if (action === 'remove') confirmRemove(t);
+    else if (action === 'horaire') offerHoraire(t.id, true);
+    else if (action === 'merge') openMergeModal(t);
     else if (action === 'up' || action === 'down') {
       try { await pushOp({ op: 'reorder', taskId, direction: action }); offerHoraire(taskId); }
       catch (err) { alert(err.message || 'Erreur'); }
@@ -1292,11 +1308,97 @@ async function submitEditModal() {
 }
 
 async function confirmRemove(task) {
-  if (!confirm(`Supprimer définitivement la tâche « ${task.text} » ?`)) return;
+  if (!confirm(`Mettre « ${task.text} » à la corbeille ?\n\nSa fiche est gardée : vous pourrez le restaurer depuis ♻ Corbeille.`)) return;
   try {
     await pushOp({ op: 'remove', taskId: task.id });
+    showToast('Mis à la corbeille', { label: 'Annuler', run: () => restoreFromTrash(task.id) });
   } catch (e) {
     alert(e.message || 'Erreur lors de la suppression');
+  }
+}
+
+// ── FUSION ─────────────────────────────────────────────────────
+// Two blocks become one; both fiches are kept, one after the other, and
+// the absorbed block goes to the corbeille (it can be put back).
+let mergeTaskId = null;
+function openMergeModal(task) {
+  mergeTaskId = task.id;
+  const { slots, tasks, days } = currentState;
+  const day = days.find((d) => d.id === task.dayId);
+  $('merge-title').textContent = `Fusionner « ${task.text} » avec…`;
+  let html = '';
+  for (const slot of slots) {
+    const list = tasks.filter((t) => t.dayId === task.dayId && t.slotId === slot.id && t.id !== task.id)
+      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    if (!list.length) continue;
+    html += `<div class="merge-slot">${escapeHtml(slot.label)}</div>`;
+    for (const t of list) {
+      const h = horaireOf(t);
+      html += `<label class="merge-opt"><input type="radio" name="merge-other" value="${escapeHtml(t.id)}">
+        <span>${h ? `<b>${escapeHtml(h)}</b> ` : ''}${escapeHtml(t.text)}</span></label>`;
+    }
+  }
+  $('merge-list').innerHTML = html || `<em>Aucun autre temps le ${escapeHtml(day ? day.name : 'même jour')}.</em>`;
+  $('merge-text').value = task.text;
+  $('merge-error').textContent = '';
+  $('merge-list').onchange = () => {
+    const other = tasks.find((t) => t.id === mergeOtherId());
+    if (other) $('merge-text').value = `${task.text} + ${other.text}`.slice(0, 300);
+  };
+  $('merge-modal').classList.remove('hidden');
+}
+function mergeOtherId() {
+  const r = document.querySelector('#merge-list input[name="merge-other"]:checked');
+  return r ? r.value : null;
+}
+function closeMergeModal() { $('merge-modal').classList.add('hidden'); mergeTaskId = null; }
+async function saveMerge() {
+  const otherId = mergeOtherId();
+  if (!otherId) { $('merge-error').textContent = 'Choisissez le temps à fusionner'; return; }
+  const text = $('merge-text').value.trim();
+  if (!text) { $('merge-error').textContent = 'Donnez un titre'; return; }
+  const taskId = mergeTaskId;
+  try {
+    await pushOp({ op: 'merge', taskId, otherId, text });
+    closeMergeModal();
+    showToast('Temps fusionnés, les deux fiches sont gardées', { label: 'Voir la fiche', run: () => openDetailsModal(taskId) });
+  } catch (e) {
+    $('merge-error').textContent = e.message || 'Erreur';
+  }
+}
+
+// ── CORBEILLE ──────────────────────────────────────────────────
+function openTrashModal() {
+  renderTrash();
+  $('trash-modal').classList.remove('hidden');
+}
+function closeTrashModal() { $('trash-modal').classList.add('hidden'); }
+function renderTrash() {
+  const list = (currentState && currentState.trash) || [];
+  const dayName = (id) => { const d = currentState.days.find((x) => x.id === id); return d ? `${d.short} ${d.name}` : 'jour retiré'; };
+  const slotName = (id) => { const sl = currentState.slots.find((x) => x.id === id); return sl ? sl.label : id; };
+  $('trash-list').innerHTML = !list.length
+    ? '<em>La corbeille est vide.</em>'
+    : list.map((t) => {
+      const d = t.details || {};
+      const body = ['resume', 'objectifs', 'deroule', 'materiel', 'notes'].map((k) => d[k]).filter(Boolean).join('\n\n');
+      return `<div class="trash-row">
+        <div class="trash-main">
+          <b>${escapeHtml(t.text)}</b>
+          <small>${escapeHtml(dayName(t.dayId))} · ${escapeHtml(slotName(t.slotId))} — ${escapeHtml(t.reason || 'Supprimé')}, ${escapeHtml(new Date(t.deletedAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }))}${t.deletedBy ? ' par ' + escapeHtml(t.deletedBy) : ''}</small>
+          ${body ? `<details><summary>Voir la fiche</summary><div class="dr-body">${richText(body)}</div></details>` : ''}
+        </div>
+        <button type="button" class="modal-btn primary" onclick="restoreFromTrash('${escapeHtml(t.id)}')">Restaurer</button>
+      </div>`;
+    }).join('');
+}
+async function restoreFromTrash(taskId) {
+  try {
+    await pushOp({ op: 'restore', taskId });
+    showToast('Restauré à sa place');
+    if (!$('trash-modal').classList.contains('hidden')) renderTrash();
+  } catch (e) {
+    alert(e.message || 'Erreur');
   }
 }
 

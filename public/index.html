@@ -965,6 +965,18 @@
     transition: opacity 0.2s, transform 0.2s;
     z-index: 1100;
   }
+  .toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+  .toast button { white-space: nowrap; background: none; border: 0; color: #FFC58A; font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; padding: 0; }
+  .merge-help { font-size: 9pt; color: #556; margin-bottom: 10px; }
+  .merge-list { max-height: 45vh; overflow: auto; margin-bottom: 10px; }
+  .merge-slot { font-size: 8pt; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; color: #E07B2A; margin: 8px 0 4px; }
+  .merge-opt { display: flex; gap: 8px; align-items: flex-start; padding: 8px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; font-size: 10pt; cursor: pointer; }
+  .merge-opt input { margin-top: 3px; }
+  .trash-list { max-height: 60vh; overflow: auto; }
+  .trash-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .trash-main { flex: 1; min-width: 0; font-size: 10pt; }
+  .trash-main small { display: block; color: #667; font-size: 8.5pt; margin-top: 2px; }
+  .trash-main details { margin-top: 4px; font-size: 9pt; }
   .toast.show {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
@@ -1058,7 +1070,7 @@
   @media (max-width: 420px) {
     .page-header h1 { font-size: 11pt; }
     .page-header .subtitle { display: none; }
-    .btn-print, .btn-reset, .btn-users, .btn-logout span.btn-label { display: none; }
+    .btn-print span.btn-label, .btn-reset span.btn-label, .btn-users span.btn-label, .btn-logout span.btn-label { display: none; }
     .user-chip { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
 
@@ -1363,6 +1375,31 @@
   </div>
 </div>
 
+<div class="modal-backdrop hidden" id="merge-modal">
+  <div class="modal-card">
+    <h3 id="merge-title">Fusionner avec…</h3>
+    <p class="merge-help">Les deux fiches sont gardées l'une après l'autre, l'horaire couvre les deux. L'autre temps part dans la corbeille (restaurable).</p>
+    <div id="merge-list" class="merge-list"></div>
+    <div class="modal-field"><label for="merge-text">Titre du temps fusionné</label><input type="text" id="merge-text" maxlength="300"></div>
+    <div class="modal-error" id="merge-error"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeMergeModal()">Annuler</button>
+      <button class="modal-btn primary" type="button" onclick="saveMerge()">Fusionner</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop hidden" id="trash-modal">
+  <div class="modal-card">
+    <h3>♻ Corbeille</h3>
+    <p class="merge-help">Les temps supprimés, fusionnés ou retirés par une synchro, avec leur fiche. « Restaurer » les remet à leur place.</p>
+    <div id="trash-list" class="trash-list"></div>
+    <div class="modal-actions">
+      <button class="modal-btn ghost" type="button" onclick="closeTrashModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="horaire-modal">
   <div class="modal-card">
     <h3>Changer l'horaire ?</h3>
@@ -1453,6 +1490,7 @@
       <button class="btn-users" id="btn-login" style="display:none" onclick="openLoginGate()">🔒 <span class="btn-label">Se connecter</span></button>
       <button class="btn-edit-mode" id="btn-edit-mode" style="display:none" onclick="toggleEditMode()">✎ <span class="btn-label">Modifier</span></button>
       <button class="btn-users" id="btn-users" style="display:none" onclick="openTeamModal()">👥 <span class="btn-label">Équipe</span></button>
+      <button class="btn-users" id="btn-trash" style="display:none" onclick="openTrashModal()" title="Temps supprimés ou fusionnés">♻ <span class="btn-label">Corbeille</span></button>
       <button class="btn-reset" id="btn-reset" style="display:none" onclick="resetAll()">↺ <span class="btn-label">Réinitialiser</span></button>
       <button class="btn-print" onclick="window.print()">🖨 <span class="btn-label">Imprimer</span></button>
       <button class="btn-logout" id="btn-logout" style="display:none" onclick="logout()">⇦ <span class="btn-label">Quitter</span></button>
