@@ -358,7 +358,15 @@
 
   /* ── DAY VIEW (phones) ─────────────────────────────────────── */
   .day-view { display: none; }
-  .dv-tabs { position: sticky; top: 0; z-index: 6; display: flex; gap: 6px; overflow-x: auto; padding: 8px; background: #fff; border-bottom: 1px solid var(--border); scrollbar-width: none; }
+  .dv-bar { position: sticky; top: 0; z-index: 6; display: flex; align-items: stretch; background: #fff; border-bottom: 1px solid var(--border); }
+  .dv-tabs { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; padding: 8px; scrollbar-width: none; }
+  .dv-edit { flex: 0 0 auto; margin: 8px 0 8px 8px; min-width: 58px; border: 1px solid #E07B2A; border-radius: 12px; background: #fff; color: #C0621A; font-family: inherit; font-size: 14pt; line-height: 1.1; cursor: pointer; }
+  .dv-edit small { display: block; font-size: 7.5pt; font-weight: 700; }
+  .dv-edit.active { background: #E07B2A; color: #fff; }
+  .dv-now-badge { display: none; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: #E07B2A; color: #fff; font-size: 7.5pt; vertical-align: 1px; }
+  li.task.is-now .dv-now-badge { display: inline-block; }
+  .day-view li.task.is-now { border: 2px solid #E07B2A; box-shadow: 0 0 0 3px rgba(224,123,42,.15); }
+  #planning-table li.task.is-now { outline: 2px solid #E07B2A; outline-offset: -1px; border-radius: 4px; }
   .dv-tabs::-webkit-scrollbar { display: none; }
   .dv-tab { flex: 0 0 auto; min-width: 58px; border: 1px solid var(--border); border-radius: 12px; padding: 6px 8px; background: #fff; color: var(--navy); font-family: inherit; line-height: 1.15; text-align: center; cursor: pointer; position: relative; }
   .dv-tab b { display: block; font-size: 12pt; }
