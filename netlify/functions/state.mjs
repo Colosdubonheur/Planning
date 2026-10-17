@@ -37,13 +37,14 @@ function cleanText(raw) {
 // Prepared collaboratively by the team.  Only `resume` (text meant for the
 // trainees) is visible on the public share link; everything else is
 // team-only and stripped from anonymous reads.
+// Generous limits: merging two blocks concatenates their fiches.
 const DETAIL_TEXT_FIELDS = {
-  resume: 2000,     // pour les stagiaires (public)
+  resume: 4000,     // pour les stagiaires (public)
   duree: 60,
-  objectifs: 4000,
-  deroule: 8000,
-  materiel: 4000,
-  notes: 4000,      // notes internes de l'équipe
+  objectifs: 8000,
+  deroule: 16000,
+  materiel: 8000,
+  notes: 8000,      // notes internes de l'équipe
   ficheAnima: 6000, // sommaire de la fiche Anima (renseigné par la synchro)
 };
 const DETAIL_STATUS = new Set(["", "a_preparer", "en_cours", "pret"]);
@@ -83,8 +84,9 @@ function applyDetailsPatch(task, patch, actorUser) {
 
 // Anonymous viewers (share link) only see the public part of the details.
 export function publicView(state) {
+  const { trash, ...visible } = state;
   return {
-    ...state,
+    ...visible,
     tasks: (state.tasks || []).map((t) => {
       if (!t.details) return t;
       const d = {};
@@ -121,6 +123,57 @@ function reorderColumn(state, dayId, slotId) {
     .filter((t) => t.dayId === dayId && t.slotId === slotId)
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   column.forEach((t, i) => { t.order = i; });
+}
+
+// ── Corbeille ───────────────────────────────────────────────────
+// Deleted, merged-away or dropped blocks are kept here with their fiche so
+// nothing typed by the team is ever lost; they can be put back.
+const MAX_TRASH = 300;
+function toTrash(state, task, actor, reason) {
+  if (!Array.isArray(state.trash)) state.trash = [];
+  const { order, ...rest } = task;
+  state.trash.unshift({ ...rest, deletedAt: Date.now(), deletedBy: actor.user, reason });
+  if (state.trash.length > MAX_TRASH) state.trash.length = MAX_TRASH;
+}
+
+// "Horaire conseillé : 9h30 - 11h15" helpers (the time lives in the déroulé).
+const HORAIRE_RE = /Horaire conseillé : ([^\n]*)/;
+function parseHoraire(deroule) {
+  const m = HORAIRE_RE.exec(deroule || "");
+  if (!m) return null;
+  const t = /(\d{1,2})\s*h\s*(\d{2})?(?:\s*[-–à]+\s*(\d{1,2})\s*h\s*(\d{2})?)?/i.exec(m[1]);
+  if (!t) return null;
+  const start = +t[1] * 60 + (+t[2] || 0);
+  const end = t[3] !== undefined ? +t[3] * 60 + (+t[4] || 0) : start;
+  return { start, end };
+}
+const fmtMin = (m) => `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
+const stripHoraire = (s) => String(s || "").replace(/^Horaire conseillé : [^\n]*\n*/m, "").trim();
+
+// Fiche of `keep` + fiche of `other`, nothing dropped: text fields are put
+// one after the other under the other block's title, the time spans both.
+function mergeDetails(keep, other) {
+  const a = keep.details || {};
+  const b = other.details || {};
+  const out = { ...a };
+  for (const k of ["resume", "objectifs", "materiel", "notes", "ficheAnima", "deroule"]) {
+    const va = k === "deroule" ? stripHoraire(a[k]) : String(a[k] || "").trim();
+    const vb = k === "deroule" ? stripHoraire(b[k]) : String(b[k] || "").trim();
+    let v = va;
+    if (vb && vb !== va) v = va ? `${va}\n\n── ${other.text} ──\n${vb}` : vb;
+    if (v) out[k] = v; else delete out[k];
+  }
+  const ha = parseHoraire(a.deroule);
+  const hb = parseHoraire(b.deroule);
+  if (ha || hb) {
+    const start = Math.min(...[ha, hb].filter(Boolean).map((h) => h.start));
+    const end = Math.max(...[ha, hb].filter(Boolean).map((h) => h.end));
+    out.deroule = `Horaire conseillé : ${fmtMin(start)}${end > start ? " - " + fmtMin(end) : ""}` + (out.deroule ? "\n\n" + out.deroule : "");
+  }
+  if (!out.duree && b.duree) out.duree = b.duree;
+  const formateurs = [...new Set([...(a.formateurs || []), ...(b.formateurs || [])])];
+  if (formateurs.length) out.formateurs = formateurs.slice(0, 10);
+  return out;
 }
 
 function applyOp(state, op, actor) {
@@ -196,6 +249,46 @@ function applyOp(state, op, actor) {
       const removed = state.tasks[idx];
       state.tasks.splice(idx, 1);
       reorderColumn(state, removed.dayId, removed.slotId);
+      toTrash(state, removed, actor, "Supprimé");
+      break;
+    }
+
+    case "restore": {
+      const trash = Array.isArray(state.trash) ? state.trash : [];
+      const i = trash.findIndex((t) => t.id === op.taskId);
+      if (i === -1) throw new Error("Introuvable dans la corbeille");
+      const { deletedAt, deletedBy, reason, ...task } = trash[i];
+      trash.splice(i, 1);
+      // Back where it was, or on the first day if that day no longer exists.
+      if (!state.days.some((d) => d.id === task.dayId)) task.dayId = state.days[0].id;
+      if (!state.slots.some((sl) => sl.id === task.slotId) || task.slotId === "repas") task.slotId = "matin";
+      if (state.tasks.some((t) => t.id === task.id)) task.id = newTaskId();
+      task.order = state.tasks.filter((t) => t.dayId === task.dayId && t.slotId === task.slotId).length;
+      state.tasks.push(task);
+      break;
+    }
+
+    case "merge": {
+      // Fold `otherId` into `taskId`: one block, both fiches kept.
+      const keep = state.tasks.find((t) => t.id === op.taskId);
+      const other = state.tasks.find((t) => t.id === op.otherId);
+      if (!keep || !other) throw new Error("Tâche introuvable");
+      if (keep === other) throw new Error("Choisissez un autre temps");
+      keep.text = op.text !== undefined ? cleanText(op.text) : cleanText(`${keep.text} + ${other.text}`.slice(0, MAX_TEXT));
+      const details = mergeDetails(keep, other);
+      details.updatedBy = actor.user;
+      details.updatedAt = Date.now();
+      keep.details = details;
+      const ids = [...new Set([
+        ...(keep.animaIds || (keep.animaId ? [keep.animaId] : [])),
+        ...(other.animaIds || (other.animaId ? [other.animaId] : [])),
+      ])].slice(0, MAX_ANIMA_IDS);
+      if (ids.length) keep.animaId = ids[0];
+      if (ids.length > 1) keep.animaIds = ids;
+      keep.done = !!(keep.done && other.done);
+      state.tasks = state.tasks.filter((t) => t !== other);
+      reorderColumn(state, other.dayId, other.slotId);
+      toTrash(state, other, actor, `Fusionné dans « ${keep.text} »`);
       break;
     }
 
@@ -295,6 +388,8 @@ function applyOp(state, op, actor) {
         }
         next.push(task);
       }
+      // Blocks the new list no longer has: keep the ones with a fiche.
+      for (const t of pool) if (t.details) toTrash(state, t, actor, "Retiré par la synchro / restauration");
       state.tasks = next;
       break;
     }
@@ -313,6 +408,7 @@ function applyOp(state, op, actor) {
       state.days = newDays;
       state.startDate = startDate;
       // Drop tasks whose day no longer exists, then recompact each surviving column.
+      for (const t of state.tasks) if (!keep.has(t.dayId)) toTrash(state, t, actor, "Jour retiré du planning");
       state.tasks = state.tasks.filter((t) => keep.has(t.dayId));
       for (const d of newDays) {
         for (const slot of state.slots) {
