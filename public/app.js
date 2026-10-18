@@ -701,6 +701,42 @@ function updateProgress() {
 }
 
 // ── RENDER ─────────────────────────────────────────────────────
+// ── TYPES DE TEMPS (couleurs du planning) ──────────────────────
+// Deduced from the title, in this order: "Prépa du forum" is a prep time,
+// "Grand jeu 2" a big game, "Débrief de la veillée" a regular session.
+const CATEGORY_RULES = [
+  ['pause', /^pause\b/],
+  ['prepa', /^(prepa|preparation)\b|\bprepa(ration)? (des?|du|de la|grands?)\b|cahier des charges/],
+  ['forum', /\bforum\b/],
+  ['haj', /\bhaj\b/],
+  ['grandjeu', /\bgrands? jeux?\b/],
+  ['veillee', /^veillee\b/],
+  ['kermesse', /kermesse|auberge espagnole/],
+  ['intervention', /unicef|intervenant|intervention/],
+];
+const CATEGORY_LABELS = {
+  forum: 'Forum', haj: 'HAJ', prepa: 'Temps de prépa', grandjeu: 'Grands jeux', apport: 'Apports',
+  intervention: 'Intervention', veillee: 'Veillée', kermesse: 'Kermesse',
+};
+
+function taskCategory(t) {
+  const txt = String(t.text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  for (const [cat, re] of CATEGORY_RULES) if (re.test(txt)) return cat;
+  return 'apport';
+}
+
+// "12h00 - 13h00" between the end of the morning and the start of the afternoon.
+function repasHoraire(dayId) {
+  const times = (slotId) => currentState.tasks
+    .filter((t) => t.dayId === dayId && t.slotId === slotId)
+    .map((t) => parseHoraire(horaireOf(t))).filter(Boolean);
+  const m = times('matin'), a = times('aprem');
+  if (!m.length || !a.length) return '';
+  const end = Math.max(...m.map((h) => (h.end != null ? h.end : h.start + 30)));
+  const start = Math.min(...a.map((h) => h.start));
+  return start > end ? `${fmtHoraire(end)} - ${fmtHoraire(start)}` : '';
+}
+
 function renderPlanning() {
   // Keep the empty-state card / table visibility in sync with the current
   // selection.  Without this, opening a share link as an anonymous visitor
@@ -720,50 +756,45 @@ function renderPlanning() {
   const isEditor = canEditContent();
   if (!table) return;
 
-  // Header row
-  let html = '<thead><tr class="col-headers"><th class="corner"></th>';
+  // One independent column per day (cards), like the printed planning:
+  // each day flows on its own instead of aligning the slots across days.
+  let html = '';
   for (const d of days) {
-    const cls = d.weekend ? 'weekend' : '';
-    html += `<th class="${cls}">
-      <span class="day-j">${escapeHtml(d.short || '')}</span>
-      <span class="day-name">${escapeHtml(d.name || '')}</span>
-      <span class="day-date">${escapeHtml(d.date || '')}</span>
-    </th>`;
-  }
-  html += '</tr></thead><tbody>';
-
-  // Body rows, one per slot
-  for (const slot of slots) {
-    const rowClass = 'row-' + slot.id;
-    const slotCls = 'sl-' + slot.id;
-    html += `<tr class="${rowClass}"><td class="slot-label ${slotCls}">${escapeHtml(slot.label)}</td>`;
-    for (const d of days) {
-      html += `<td class="cell" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}">`;
+    html += `<section class="day-col${d.weekend ? ' weekend' : ''}" data-day="${escapeHtml(d.id)}">
+      <div class="day-head">
+        <span class="day-name">${escapeHtml(d.name || '')}</span>
+        <span class="day-date">${escapeHtml(d.date || '')}</span>
+        <span class="day-j">${escapeHtml(d.short || '')}</span>
+      </div>`;
+    for (const slot of slots) {
+      const slotCls = 'sl-' + slot.id;
       if (slot.id === 'repas') {
-        html += '<div class="repas-content">🍽&nbsp;Repas</div>';
-      } else {
-        const cellTasks = tasks
-          .filter((t) => t.dayId === d.id && t.slotId === slot.id)
-          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        html += '<ul class="tasks">';
-        for (const t of cellTasks) {
-          const doneCls = t.done ? ' done' : '';
-          html += `<li class="task${doneCls}" data-task-id="${escapeHtml(t.id)}">
-            <span class="chk"></span>
-            <span class="task-text">${escapeHtml(t.text)}${taskBadges(t)}</span>
-            ${showDetailsButton(t) ? `<button type="button" class="task-info" data-action="details" title="Fiche du module" aria-label="Fiche du module">›</button>` : ''}
-          </li>`;
-        }
-        html += '</ul>';
-        if (isEditor) {
-          html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
-        }
+        const rh = repasHoraire(d.id);
+        html += `<div class="cell ${slotCls}" data-day="${escapeHtml(d.id)}" data-slot="repas"><div class="repas-content">Repas${rh ? ` <span class="repas-time">${escapeHtml(rh)}</span>` : ''}</div></div>`;
+        continue;
       }
-      html += '</td>';
+      const cellTasks = tasks
+        .filter((t) => t.dayId === d.id && t.slotId === slot.id)
+        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      html += `<div class="cell ${slotCls}${cellTasks.length ? '' : ' empty'}" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}">
+        <div class="slot-cap">${escapeHtml(slot.label)}</div><ul class="tasks">`;
+      for (const t of cellTasks) {
+        const doneCls = t.done ? ' done' : '';
+        const th = horaireOf(t);
+        html += `<li class="task${doneCls} cat-${taskCategory(t)}" data-task-id="${escapeHtml(t.id)}">
+          <span class="chk"></span>
+          <span class="task-text">${th ? `<span class="t-time">${escapeHtml(th)}</span>` : ''}<span class="t-title">${escapeHtml(t.text)}</span>${taskBadges(t)}</span>
+          ${showDetailsButton(t) ? `<button type="button" class="task-info" data-action="details" title="Fiche du module" aria-label="Fiche du module">›</button>` : ''}
+        </li>`;
+      }
+      html += '</ul>';
+      if (isEditor) {
+        html += `<button class="btn-add-task" data-action="add" data-day="${escapeHtml(d.id)}" data-slot="${escapeHtml(slot.id)}" type="button">+ Ajouter</button>`;
+      }
+      html += '</div>';
     }
-    html += '</tr>';
+    html += '</section>';
   }
-  html += '</tbody>';
   table.innerHTML = html;
 
   renderDayView();
@@ -1018,13 +1049,17 @@ function renderDayView() {
   const day = days.find((d) => d.id === dayViewDayId);
   html += `<div class="dv-title">${escapeHtml(day.short || '')} · ${escapeHtml(day.name || '')} ${escapeHtml(day.date || '')}</div>`;
   for (const slot of slots) {
-    if (slot.id === 'repas') { html += '<div class="dv-repas">🍽 Repas</div>'; continue; }
+    if (slot.id === 'repas') {
+      const rh = repasHoraire(day.id);
+      html += `<div class="dv-repas">Repas${rh ? ` <span class="repas-time">${escapeHtml(rh)}</span>` : ''}</div>`;
+      continue;
+    }
     const list = tasks.filter((t) => t.dayId === day.id && t.slotId === slot.id).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     if (!list.length && !(isEditor && editMode)) continue;
     html += `<section class="dv-slot sl-${escapeHtml(slot.id)}"><h3>${DV_SLOT_ICON[slot.id] || ''} ${escapeHtml(slot.label)}</h3><ul class="tasks" data-day="${escapeHtml(day.id)}" data-slot="${escapeHtml(slot.id)}">`;
     for (const t of list) {
       const h = horaireOf(t);
-      html += `<li class="task${t.done ? ' done' : ''}" data-task-id="${escapeHtml(t.id)}">
+      html += `<li class="task${t.done ? ' done' : ''} cat-${taskCategory(t)}" data-task-id="${escapeHtml(t.id)}">
         <span class="chk" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" aria-label="Fait"></span>
         <span class="task-text">${h ? `<span class="dv-time"${isEditor ? ' data-action="horaire" role="button" title="Changer l\'horaire"' : ''}>${escapeHtml(h)}${isEditor ? ' <span class="dv-time-edit">✎</span>' : ''}<span class="dv-now-badge">En cours</span></span>` : (isEditor && editMode ? '<span class="dv-time dv-time-add" data-action="horaire" role="button">🕘 Ajouter un horaire</span>' : '')}${escapeHtml(t.text)}${taskBadges(t)}</span>
         ${showDetailsButton(t) ? '<span class="dv-go" aria-hidden="true">›</span>' : ''}
@@ -1088,7 +1123,7 @@ function initDragAndDrop() {
   if (typeof Sortable === 'undefined') return;
   if (!editMode || !canEditContent()) return;
   // Table on desktop, day view on phones (its lists carry data-day / data-slot).
-  document.querySelectorAll('#planning-table td.cell ul.tasks, #day-view ul.tasks[data-slot]').forEach((ul) => {
+  document.querySelectorAll('#planning-table .cell ul.tasks, #day-view ul.tasks[data-slot]').forEach((ul) => {
     sortables.push(Sortable.create(ul, {
       group: 'tasks',
       animation: 150,
@@ -1100,7 +1135,7 @@ function initDragAndDrop() {
       async onEnd(evt) {
         isDragging = false;
         const taskId = evt.item && evt.item.dataset.taskId;
-        const cell = evt.to && (evt.to.closest('td.cell') || evt.to);
+        const cell = evt.to && (evt.to.closest('.cell') || evt.to);
         if (!taskId || !cell || !cell.dataset.slot) return;
         if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
         try {
