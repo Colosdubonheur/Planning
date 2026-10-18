@@ -892,11 +892,32 @@ async function saveHoraire() {
 
 function dayStorageKey() { return 'pb-day-' + (currentPlanningId || ''); }
 
+// Today, or tomorrow once today's last timed block is over (or after 22h
+// when today has no times): in the evening the useful day is the next one.
+function dayIsOver(dayId) {
+  const m = nowMinutes();
+  const ends = currentState.tasks
+    .filter((t) => t.dayId === dayId)
+    .map((t) => parseHoraire(horaireOf(t)))
+    .filter(Boolean)
+    .map((h) => (h.end != null ? h.end : h.start + 30));
+  return ends.length ? m >= Math.max(...ends) : m >= 22 * 60;
+}
+
+function liveDayId() {
+  const today = todayDayId();
+  if (!today || !dayIsOver(today)) return today;
+  const i = currentState.days.findIndex((d) => d.id === today);
+  const next = currentState.days[i + 1];
+  return next ? next.id : today;
+}
+
 function defaultDayId() {
   const days = currentState.days;
-  // During the stage, open on today; otherwise on the last day viewed.
-  const today = todayDayId();
-  if (today) return today;
+  // During the stage, open on the day in progress (tomorrow once today is
+  // over); otherwise on the last day viewed.
+  const live = liveDayId();
+  if (live) return live;
   try {
     const saved = localStorage.getItem(dayStorageKey());
     if (saved && days.some((d) => d.id === saved)) return saved;
@@ -944,7 +965,11 @@ function scrollDayViewToNow() {
   const dv = $('day-view');
   if (!dv || !dv.offsetParent || !currentState) return;
   dvAutoScrolledFor = currentPlanningId;
-  if (dayViewDayId !== todayDayId()) return;
+  if (dayViewDayId !== todayDayId()) {
+    // Opened on tomorrow because today is over: start at the top of the day.
+    if (dayViewDayId === liveDayId()) window.scrollTo({ top: 0 });
+    return;
+  }
   const { now, next } = currentTaskIds();
   const id = now || next;
   let target = id && dv.querySelector(`li.task[data-task-id="${CSS.escape(id)}"]`);
