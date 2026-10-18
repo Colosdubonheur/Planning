@@ -250,6 +250,7 @@ function applyUserUI() {
   $('btn-rename-planning').style.display = owner ? '' : 'none';
   $('btn-delete-planning').style.display = owner ? '' : 'none';
   $('btn-anima-sync').style.display = owner ? '' : 'none';
+  $('btn-asm-sync').style.display = owner ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
   $('btn-batch').style.display = owner ? '' : 'none';
 
@@ -353,6 +354,7 @@ function renderPlanningSelector() {
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
+  $('btn-asm-sync').style.display = canOwn ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
   $('btn-batch').style.display = canOwn ? '' : 'none';
 
@@ -2067,6 +2069,142 @@ async function copyAnimaSyncCode() {
   try { await navigator.clipboard.writeText(ta.value); showToast('Code du favori copié'); }
   catch { ta.select(); document.execCommand('copy'); showToast('Code du favori copié'); }
 }
+
+// ── SYNCHRO ANIMA STAGES MANAGER ───────────────────────────────
+// Server to server through /api/asm (the bridge token stays on Netlify).
+// Same comparison as the Anima bookmarklet; "pull" goes through the usual
+// replaceAll op, which keeps a copy in the history (🕘) before replacing.
+const ASM_STAGE_KEY = 'asm-stage:';
+let asmBusy = false;
+
+function asmStageId() { return $('asm-stage').value; }
+
+function asmSetBusy(busy) {
+  asmBusy = busy;
+  $('asm-pull').disabled = busy || !asmStageId();
+  $('asm-push').disabled = busy || !asmStageId();
+}
+
+async function openAsmModal() {
+  if (!currentPlanningId) return;
+  $('asm-error').textContent = '';
+  $('asm-confirm').innerHTML = '';
+  $('asm-diff').textContent = 'Chargement des stages…';
+  $('asm-stage').innerHTML = '';
+  $('asm-modal').classList.remove('hidden');
+  asmSetBusy(true);
+  try {
+    const data = await apiFetch('/api/asm?op=stages');
+    const stages = data.stages || [];
+    if (!stages.length) {
+      $('asm-diff').textContent = "Aucun stage n'est ouvert dans l'outil pour l'instant.";
+      return;
+    }
+    let saved = '';
+    try { saved = localStorage.getItem(ASM_STAGE_KEY + currentPlanningId) || ''; } catch {}
+    $('asm-stage').innerHTML = stages.map((st) =>
+      '<option value="' + escapeHtml(st.id) + '">' + escapeHtml(st.label || st.id) + '</option>').join('');
+    if (stages.some((st) => st.id === saved)) $('asm-stage').value = saved;
+    await asmPreview();
+  } catch (e) {
+    $('asm-diff').textContent = '';
+    $('asm-error').textContent = e.message || 'Erreur';
+  } finally {
+    asmSetBusy(false);
+  }
+}
+
+function closeAsmModal() { $('asm-modal').classList.add('hidden'); }
+
+async function onAsmStageChange() {
+  try { localStorage.setItem(ASM_STAGE_KEY + currentPlanningId, asmStageId()); } catch {}
+  $('asm-confirm').innerHTML = '';
+  asmSetBusy(true);
+  try { await asmPreview(); } finally { asmSetBusy(false); }
+}
+
+function asmCellLabel(key) {
+  const [day, slot] = key.split('|');
+  return 'J' + day.slice(1) + ' · ' + (SLOT_LABELS[slot] || slot);
+}
+
+async function asmPreview() {
+  $('asm-error').textContent = '';
+  $('asm-diff').textContent = 'Comparaison…';
+  const data = await apiFetch('/api/asm', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'preview', planningId: currentPlanningId, stageId: asmStageId() }),
+  });
+  const cells = data.cells || [];
+  const list = (items) => (items && items.length ? items.map(escapeHtml).join(' · ') : '<i>vide</i>');
+  let html = '';
+  if (!cells.length) {
+    html = '<p class="asm-same">✓ Les deux plannings sont identiques.</p>';
+  } else {
+    html = '<p>' + cells.length + ' créneau' + (cells.length > 1 ? 'x' : '') + ' différent' + (cells.length > 1 ? 's' : '') + ' :</p>'
+      + cells.slice(0, 40).map((c) => '<div class="asm-cell"><b>' + escapeHtml(asmCellLabel(c.key)) + '</b>'
+        + (c.outOfRange
+          ? '<span class="asm-side">Outil : ' + list(c.outil) + ' (jour absent de planning-bafa, conservé dans l\'outil)</span>'
+          : '<span class="asm-side">Outil : ' + list(c.outil) + '</span><br><span class="asm-side">planning-bafa : ' + list(c.planning) + '</span>')
+        + '</div>').join('')
+      + (cells.length > 40 ? '<p>… et ' + (cells.length - 40) + ' autre(s).</p>' : '');
+  }
+  if (data.ignoredDays && data.ignoredDays.length) {
+    html += '<p class="asm-side">Jours de planning-bafa absents du stage (non envoyés) : '
+      + data.ignoredDays.map((d) => 'J' + d.slice(1)).join(', ') + '.</p>';
+  }
+  $('asm-diff').innerHTML = html;
+}
+
+function asmAsk(direction) {
+  if (asmBusy || !asmStageId()) return;
+  const text = direction === 'push'
+    ? "Remplacer le planning de l'outil par celui-ci ? L'outil garde une copie, et l'équipe verra « modifié par planning-bafa »."
+    : "Remplacer ce planning par celui de l'outil ? Une copie de la version actuelle est gardée (🕘).";
+  $('asm-confirm').innerHTML = escapeHtml(text)
+    + '<button class="modal-btn primary" type="button" id="asm-yes">Oui, remplacer</button>'
+    + '<button class="modal-btn ghost" type="button" id="asm-no">Annuler</button>';
+  $('asm-no').onclick = () => { $('asm-confirm').innerHTML = ''; };
+  $('asm-yes').onclick = () => { $('asm-confirm').innerHTML = ''; asmRun(direction); };
+}
+
+async function asmPullInto(reason) {
+  const data = await apiFetch('/api/asm', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'pull', planningId: currentPlanningId, stageId: asmStageId() }),
+  });
+  await pushOp({ op: 'replaceAll', tasks: data.tasks || [], reason });
+}
+
+async function asmRun(direction) {
+  $('asm-error').textContent = '';
+  asmSetBusy(true);
+  try {
+    if (direction === 'pull') {
+      await asmPullInto("Avant import depuis Anima Stages Manager");
+      showToast('Planning récupéré depuis l\'outil');
+    } else {
+      const res = await apiFetch('/api/asm', {
+        method: 'POST',
+        body: JSON.stringify({ op: 'push', planningId: currentPlanningId, stageId: asmStageId() }),
+      });
+      // Items typed by hand that matched the Anima catalog: record their ids
+      // here too, so the next syncs match by id rather than by title.
+      if (res.relinked) await asmPullInto('Avant liaison au catalogue Anima');
+      showToast('Planning envoyé vers l\'outil' + (res.relinked ? ' (' + res.relinked + ' temps reliés au catalogue Anima)' : ''));
+    }
+    await asmPreview();
+  } catch (e) {
+    $('asm-error').textContent = e.message || 'Erreur';
+  } finally {
+    asmSetBusy(false);
+  }
+}
+
+window.openAsmModal = openAsmModal;
+window.closeAsmModal = closeAsmModal;
+window.onAsmStageChange = onAsmStageChange;
+window.asmAsk = asmAsk;
 
 // ── HISTORIQUE DES VERSIONS ────────────────────────────────────
 const SLOT_LABELS = { matin: 'Matin', aprem: 'Après-midi', apm: 'Après-midi', veillee: 'Veillée' };

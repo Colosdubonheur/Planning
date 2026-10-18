@@ -478,6 +478,17 @@
   .sync-steps { font-size: 12.5px; line-height: 1.5; padding-left: 18px; }
   .sync-bookmarklet { display: inline-block; padding: 8px 14px; border-radius: 8px; background: #E07B2A; color: white !important; font-weight: 800; text-decoration: none; cursor: grab; }
   #anima-sync-code { width: 100%; font-family: monospace; font-size: 10px; height: 60px; }
+  .asm-intro { font-size: 12.5px; line-height: 1.5; color: #555; margin: 0 0 10px; }
+  .asm-stage-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .asm-stage-row select { flex: 1; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; }
+  #asm-diff { font-size: 12.5px; line-height: 1.45; max-height: 45vh; overflow-y: auto; }
+  #asm-diff .asm-cell { padding: 6px 0; border-top: 1px solid #EEE; }
+  #asm-diff .asm-cell b { display: block; }
+  #asm-diff .asm-side { color: #666; }
+  #asm-diff .asm-same { color: #2E7D32; font-weight: 700; }
+  #asm-confirm { font-size: 12.5px; margin-top: 8px; }
+  #asm-confirm .modal-btn { margin-left: 6px; padding: 4px 10px; }
+  .asm-actions { flex-wrap: wrap; }
   li.task.done .chk { background: var(--done-clr); border-color: var(--done-clr); }
   li.task.done .chk::after { content:'✓'; font-size:7px; color:white; line-height:1; font-weight:900; }
 
@@ -1368,6 +1379,25 @@
   </div>
 </div>
 
+<div class="modal-backdrop hidden" id="asm-modal">
+  <div class="modal-card">
+    <h3>🗂 Anima Stages Manager</h3>
+    <p class="asm-intro">Synchronise ce planning avec l'outil de l'équipe sur <b>anima.lcdb-dev.eu</b>. Ensuite, l'outil l'envoie vers ANIMA avec « Envoyer vers ANIMA », comme d'habitude.</p>
+    <div class="asm-stage-row">
+      <label for="asm-stage">Stage</label>
+      <select id="asm-stage" onchange="onAsmStageChange()"></select>
+    </div>
+    <div id="asm-diff"></div>
+    <div id="asm-confirm"></div>
+    <div class="modal-error" id="asm-error"></div>
+    <div class="modal-actions asm-actions">
+      <button class="modal-btn ghost" type="button" id="asm-pull" onclick="asmAsk('pull')">⬇ Outil → planning-bafa</button>
+      <button class="modal-btn primary" type="button" id="asm-push" onclick="asmAsk('push')">⬆ planning-bafa → Outil</button>
+      <button class="modal-btn ghost" type="button" onclick="closeAsmModal()">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop hidden" id="history-modal">
   <div class="modal-card">
     <h3>🕘 Versions enregistrées</h3>
@@ -1493,6 +1523,7 @@
         <button type="button" id="btn-share-planning" title="Copier le lien de partage (lecture seule)" onclick="sharePlanningUrl()">🔗</button>
         <button type="button" id="btn-rename-planning" title="Renommer le planning" onclick="renamePlanningPrompt()">✎</button>
         <button type="button" id="btn-anima-sync" title="Synchro avec Anima" onclick="openAnimaSyncModal()">🔄</button>
+        <button type="button" id="btn-asm-sync" title="Synchro avec Anima Stages Manager (anima.lcdb-dev.eu)" onclick="openAsmModal()">🗂</button>
         <button type="button" id="btn-history" title="Versions enregistrées" onclick="openHistoryModal()">🕘</button>
         <button type="button" id="btn-batch" title="Appliquer des modifications" onclick="openBatchModal()">📋</button>
         <button type="button" id="btn-delete-planning" class="danger" title="Supprimer le planning" onclick="deletePlanningPrompt()">🗑</button>
