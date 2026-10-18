@@ -1096,6 +1096,100 @@
     table { min-width: 0; }
     @page { size: A4 landscape; margin: 5mm; }
   }
+
+  /* ══ PRÉSENTATION « CARTES » DU PLANNING ═══════════════════════
+     Colonnes-jours blanches, temps colorés par type (taskCategory dans
+     app.js), horaire au-dessus du titre, pauses discrètes, repas en
+     bandeau.  Même rendu sur ordinateur (tableau) et téléphone (vue jour). */
+  :root {
+    --plan-bg: #F2F0EB;
+    --cat-forum-bg: #E2EDFB;        --cat-forum: #3B7FC4;
+    --cat-haj-bg: #FDF0D6;          --cat-haj: #E0A030;
+    --cat-prepa-bg: #E4F2E8;        --cat-prepa: #3E9A62;
+    --cat-grandjeu-bg: #FCE5D5;     --cat-grandjeu: #E07B2A;
+    --cat-apport-bg: #F1F3F6;       --cat-apport: #A7B1BE;
+    --cat-intervention-bg: #EDE5F8; --cat-intervention: #8F6CCB;
+    --cat-veillee-bg: #E3E2F8;      --cat-veillee: #5A51B4;
+    --cat-kermesse-bg: #FCE3EC;     --cat-kermesse: #D9497D;
+  }
+  li.task.cat-forum, .ld.cat-forum               { --cbg: var(--cat-forum-bg);        --cbd: var(--cat-forum); }
+  li.task.cat-haj, .ld.cat-haj                   { --cbg: var(--cat-haj-bg);          --cbd: var(--cat-haj); }
+  li.task.cat-prepa, .ld.cat-prepa               { --cbg: var(--cat-prepa-bg);        --cbd: var(--cat-prepa); }
+  li.task.cat-grandjeu, .ld.cat-grandjeu         { --cbg: var(--cat-grandjeu-bg);     --cbd: var(--cat-grandjeu); }
+  li.task.cat-apport, .ld.cat-apport             { --cbg: var(--cat-apport-bg);       --cbd: var(--cat-apport); }
+  li.task.cat-intervention, .ld.cat-intervention { --cbg: var(--cat-intervention-bg); --cbd: var(--cat-intervention); }
+  li.task.cat-veillee, .ld.cat-veillee           { --cbg: var(--cat-veillee-bg);      --cbd: var(--cat-veillee); }
+  li.task.cat-kermesse, .ld.cat-kermesse         { --cbg: var(--cat-kermesse-bg);     --cbd: var(--cat-kermesse); }
+  li.task.done { --cbg: #F4F5F4; --cbd: #CDD3CC; }
+
+  /* Ordinateur : une colonne-carte par jour, chaque jour s'enchaîne librement */
+  .table-scroll { background: var(--plan-bg); padding: 14px 12px 8px; }
+  #planning-table.plan-cols { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(148px, 1fr); gap: 10px; align-items: start; min-width: 1120px; }
+  .day-col { background: #fff; border-radius: 14px; padding: 10px 8px 10px; min-width: 0; }
+  .day-head { display: flex; align-items: baseline; gap: 5px; background: var(--navy); color: #fff; border-radius: 8px; padding: 8px 11px; margin-bottom: 2px; }
+  .day-head .day-name, .day-head .day-date { display: inline; margin: 0; font-size: 11pt; font-weight: 900; color: #fff; letter-spacing: 0; }
+  .day-head .day-j { margin-left: auto; font-size: 8pt; font-weight: 700; color: rgba(255,255,255,0.7); letter-spacing: 0; }
+  #planning-table .cell { padding: 0; border: 0; background: none; }
+  #planning-table .slot-cap { margin: 8px 2px 5px; font-size: 6.6pt; font-weight: 800; letter-spacing: 0.13em; text-transform: uppercase; color: #8B95A3; }
+  #planning-table .cell.sl-veillee.empty .slot-cap { display: none; }
+  body.edit-mode #planning-table .cell.empty .slot-cap { display: block; }
+  #planning-table .cell.sl-repas { margin: 4px 0 2px; }
+  #planning-table .repas-content { padding: 4px 6px; border-radius: 6px; background: #E6F3E9; color: #2E7D4F; font-size: 7.3pt; font-weight: 700; letter-spacing: 0; text-transform: none; }
+  #planning-table ul.tasks { min-height: 4px; }
+  .repas-time { font-weight: 600; opacity: 0.85; }
+
+  #planning-table li.task { background: var(--cbg, #F1F3F6); border: 0; border-left: 4px solid var(--cbd, #A7B1BE); border-radius: 6px; padding: 6px 7px 7px 8px; margin-bottom: 6px; gap: 6px; transition: filter 0.12s; }
+  #planning-table li.task:hover { background: var(--cbg, #F1F3F6); filter: brightness(0.97); }
+  #planning-table .task-text { font-size: 7.9pt; line-height: 1.32; color: var(--text); }
+  #planning-table li.task.done .task-text { color: #98A29A; }
+  .t-time { display: block; font-size: 6.7pt; font-weight: 800; color: #475467; letter-spacing: 0.01em; margin-bottom: 1px; }
+  #planning-table li.task .chk { order: 3; margin: 1px 0 0 auto; width: 11px; height: 11px; min-width: 11px; border-radius: 3px; border-color: var(--cbd, #A7B1BE); background: #fff; opacity: 0.75; }
+  #planning-table li.task:hover .chk { opacity: 1; }
+  #planning-table li.task .task-info { order: 4; opacity: 0; transition: opacity 0.12s; }
+  #planning-table li.task:hover .task-info, #planning-table li.task .task-info:focus-visible { opacity: 1; }
+  /* Pauses : une ligne discrète, pas une carte */
+  #planning-table li.task.cat-pause { background: none; border-left: 0; padding: 0 8px 0 2px; margin: -1px 0 5px; }
+  #planning-table li.task.cat-pause .t-time { display: inline; margin: 0 5px 0 0; font-size: 6.5pt; color: #5E6B7A; }
+  #planning-table li.task.cat-pause .t-title { font-size: 6.5pt; color: #9AA3AE; }
+  #planning-table li.task.cat-pause .chk, #planning-table li.task.cat-pause .task-info { display: none; }
+  body.edit-mode #planning-table li.task { outline: 1px dashed rgba(200,140,0,0.65); outline-offset: -1px; }
+
+  .legend { background: var(--plan-bg); border-top: 0; padding: 8px 18px 12px; gap: 8px; }
+  .legend-item { gap: 6px; padding: 3px 9px 3px 0; border-radius: 6px; background: #fff; color: #3A4756; font-weight: 700; }
+  .legend .ld { width: 4px; height: 20px; border-radius: 4px 0 0 4px; background: var(--cbd); border: 0; }
+  .legend-item { overflow: hidden; }
+  .legend-item:has(.ld) { background: var(--cbg-legend, #fff); }
+
+  /* Téléphone : même langage dans la vue jour */
+  .day-view { background: var(--plan-bg); }
+  .day-view li.task { background: var(--cbg, #fff); border: 0; border-left: 5px solid var(--cbd, #A7B1BE); box-shadow: none; padding: 12px 8px 12px 4px; }
+  .day-view li.task.done { background: var(--cbg); }
+  .day-view li.task .chk { border-color: var(--cbd, #A7B1BE) !important; background: #fff; }
+  .day-view li.task.done .chk { background: var(--cbd); }
+  .day-view li.task.done .task-text { color: #98A29A; }
+  .day-view .dv-time { color: #475467; }
+  .day-view li.task.cat-pause { background: none; border-left: 0; padding: 2px 12px 6px; margin: -2px 0 6px; }
+  .day-view li.task.cat-pause .task-text { font-size: 9.5pt; color: #9AA3AE; }
+  .day-view li.task.cat-pause .dv-time { display: inline; margin: 0 6px 0 0; color: #6B7684; }
+  .day-view li.task.cat-pause .chk, .day-view li.task.cat-pause .dv-go { display: none; }
+  .dv-repas { background: #E6F3E9; color: #2E7D4F; font-weight: 800; }
+  .dv-title { background: var(--plan-bg); }
+
+  @media (max-width: 720px) {
+    .planning-picker { flex-wrap: wrap; row-gap: 4px; border-radius: 16px; }
+    .planning-picker select { max-width: none; flex: 1 1 140px; }
+  }
+  @media print {
+    #planning-table, .table-scroll, .legend { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .table-scroll { padding: 6px 2px 2px; }
+    #planning-table.plan-cols { min-width: 0; gap: 5px; }
+    .day-col { padding: 5px 4px; break-inside: avoid; }
+    #planning-table li.task { padding: 3px 4px 4px 6px; margin-bottom: 3px; }
+    #planning-table .task-text { font-size: 6.6pt; }
+    .t-time { font-size: 5.8pt; }
+    #planning-table .day-head { padding: 5px 7px; }
+    #planning-table .day-head .day-name, #planning-table .day-head .day-date { font-size: 8.5pt; }
+  }
 </style>
 </head>
 <body>
@@ -1551,7 +1645,7 @@
 
   <!-- TABLE -->
   <div class="table-scroll" id="table-scroll">
-    <table id="planning-table"></table>
+    <div id="planning-table" class="plan-cols"></div>
   </div>
 
   <!-- DAY VIEW (phones) -->
@@ -1559,12 +1653,14 @@
 
   <!-- LEGEND -->
   <div class="legend no-print">
-    <span class="legend-title">Légende :</span>
-    <span class="legend-item"><span class="ld ld-matin"></span> Matin</span>
-    <span class="legend-item"><span class="ld ld-repas"></span> Repas</span>
-    <span class="legend-item"><span class="ld ld-aprem"></span> Après-midi</span>
-    <span class="legend-item"><span class="ld ld-veillee"></span> Veillée</span>
-    <span class="legend-item"><span class="ld ld-done"></span> Réalisé</span>
+    <span class="legend-item"><span class="ld cat-forum"></span> Forum</span>
+    <span class="legend-item"><span class="ld cat-haj"></span> HAJ</span>
+    <span class="legend-item"><span class="ld cat-prepa"></span> Temps de prépa</span>
+    <span class="legend-item"><span class="ld cat-grandjeu"></span> Grands jeux</span>
+    <span class="legend-item"><span class="ld cat-apport"></span> Apports</span>
+    <span class="legend-item"><span class="ld cat-intervention"></span> Intervention</span>
+    <span class="legend-item"><span class="ld cat-veillee"></span> Veillée</span>
+    <span class="legend-item"><span class="ld cat-kermesse"></span> Kermesse</span>
     <span class="legend-tip" id="legend-tip">💡 Cliquez sur un temps pour ouvrir sa fiche, sur la case pour le cocher. Synchronisé en temps réel</span>
   </div>
 
