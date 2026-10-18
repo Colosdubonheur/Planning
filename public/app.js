@@ -252,7 +252,7 @@ function applyUserUI() {
   $('btn-anima-sync').style.display = owner ? '' : 'none';
   $('btn-asm-sync').style.display = owner || (currentUser && currentUser.role === 'directeur') ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
-  $('btn-batch').style.display = owner ? '' : 'none';
+  $('btn-batch').style.display = owner || (currentUser && currentUser.role === 'directeur') ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -356,7 +356,7 @@ function renderPlanningSelector() {
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
   $('btn-asm-sync').style.display = canOwn || (currentUser && currentUser.role === 'directeur') ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
-  $('btn-batch').style.display = canOwn ? '' : 'none';
+  $('btn-batch').style.display = canOwn || (currentUser && currentUser.role === 'directeur') ? '' : 'none';
 
   refreshEmptyState();
 }
@@ -3323,10 +3323,11 @@ function buildBatchPlan(data) {
   if (data.modifs.length > 200) throw new Error('Trop de modifications d\'un coup (200 maximum)');
   const sim = currentState.tasks.map((t) => ({ id: t.id, text: t.text, dayId: t.dayId, slotId: t.slotId, order: t.order, details: t.details }));
   let tmp = 0;
-  const steps = data.modifs.map((m, i) => {
+  const steps = data.modifs.flatMap((m, i) => {
     const step = { n: i + 1, raw: m, label: '', detail: '', error: null };
     try {
       const type = foldText(m.type || '');
+      if (type === 'remplacer') return batchReplaceSteps(sim, m, () => 'new:' + (++tmp));
       if (type === 'renommer') {
         const t = batchFind(sim, m.tache, batchDayId(m.jour));
         const text = String(m.titre || '').trim();
@@ -3375,14 +3376,78 @@ function buildBatchPlan(data) {
         sim.splice(sim.indexOf(t), 1);
         batchCell(sim, t.dayId, t.slotId).forEach((x, k) => { x.order = k; });
       } else {
-        throw new Error('Type inconnu : « ' + (m.type || '') + ' » (renommer, fiche, ajouter, deplacer, supprimer)');
+        throw new Error('Type inconnu : « ' + (m.type || '') + ' » (renommer, fiche, ajouter, deplacer, supprimer, remplacer)');
       }
     } catch (e) {
       step.error = e.message;
     }
     return step;
   });
+  steps.forEach((st, k) => { st.n = k + 1; });
   return { titre: String(data.titre || ''), steps };
+}
+
+// « remplacer » : the content of one slot of one day becomes the given list,
+// in order.  A block already there under the same title is kept (its fiche,
+// its "done" state) and moved into place; new titles are added; the others
+// go to the trash (restorable).  Each "temps" may carry an "horaire".
+function batchReplaceSteps(sim, m, newRef) {
+  const fail = (msg) => [{ n: 0, raw: m, label: '', detail: '', error: msg }];
+  let dayId, slotId;
+  try {
+    dayId = batchDayId(m.jour);
+    if (!dayId) throw new Error('Jour manquant');
+    slotId = batchSlotId(m.creneau || '');
+  } catch (e) { return fail(e.message); }
+  if (!Array.isArray(m.temps)) return fail('« temps » doit être une liste');
+  if (m.temps.length > 40) return fail('Trop de temps dans un créneau (40 maximum)');
+  const where = dayId.toUpperCase() + ' ' + slotId;
+  const items = [];
+  for (const it of m.temps) {
+    const text = String((it && it.titre) || '').trim();
+    if (!text) return fail(where + ' : titre manquant');
+    items.push({ text, horaire: it.horaire, fiche: it.fiche });
+  }
+  const cell = batchCell(sim, dayId, slotId);
+  const used = new Set();
+  for (const it of items) {
+    const k = foldText(it.text).trim();
+    it.keep = cell.find((t) => !used.has(t.id) && foldText(t.text).trim() === k) || null;
+    if (it.keep) used.add(it.keep.id);
+  }
+  const steps = [];
+  for (const t of cell) {
+    if (used.has(t.id)) continue;
+    steps.push({ raw: m, label: 'Retirer « ' + t.text + ' »', detail: where + ' → corbeille', error: null, op: { kind: 'remove', ref: t.id } });
+    sim.splice(sim.indexOf(t), 1);
+  }
+  batchCell(sim, dayId, slotId).forEach((x, k) => { x.order = k; });
+  items.forEach((it, index) => {
+    const step = { raw: m, label: '', detail: '', error: null };
+    try {
+      const fiche = { ...(it.fiche || {}), ...(it.horaire ? { horaire: it.horaire } : {}) };
+      const hasFiche = Object.keys(fiche).length > 0;
+      if (it.keep) {
+        step.patch = hasFiche ? batchFichePatch(fiche, it.keep.details) : null;
+        step.label = 'Garder « ' + it.text + ' »';
+        step.op = { kind: 'move', ref: it.keep.id, dayId, slotId, index };
+        batchPlace(sim, it.keep, dayId, slotId, index);
+        if (step.patch) it.keep.details = { ...(it.keep.details || {}), ...step.patch };
+      } else {
+        step.patch = hasFiche ? batchFichePatch(fiche, null) : null;
+        step.label = 'Ajouter « ' + it.text + ' »';
+        const t = { id: newRef(), text: it.text, dayId, slotId, order: 0 };
+        sim.push(t);
+        batchPlace(sim, t, dayId, slotId, index);
+        step.op = { kind: 'add', ref: t.id, text: it.text, dayId, slotId, index };
+      }
+      step.detail = where + (it.horaire ? ' · ' + it.horaire : '');
+    } catch (e) {
+      step.error = e.message;
+    }
+    steps.push(step);
+  });
+  return steps;
 }
 
 function renderBatchPlan() {
