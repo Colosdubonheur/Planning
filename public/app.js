@@ -2085,15 +2085,47 @@ function asmSetBusy(busy) {
   $('asm-push').disabled = busy || !asmStageId();
 }
 
+function asmShowConnect(show) {
+  $('asm-connect').style.display = show ? '' : 'none';
+  $('asm-stage-row').style.display = show ? 'none' : '';
+  $('asm-pull').style.display = show ? 'none' : '';
+  $('asm-push').style.display = show ? 'none' : '';
+  if (show) { $('asm-diff').innerHTML = ''; $('asm-status').innerHTML = ''; }
+}
+
+function asmConnect() {
+  window.location.href = '/api/asm?op=connect&planning=' + encodeURIComponent(currentPlanningId || '');
+}
+
+async function asmDisconnect() {
+  if (!confirm("Déconnecter planning-bafa de l'outil ? Il faudra cliquer à nouveau sur « Connecter » pour synchroniser.")) return;
+  try {
+    await apiFetch('/api/asm', { method: 'POST', body: JSON.stringify({ op: 'disconnect' }) });
+    showToast("planning-bafa est déconnecté de l'outil");
+    asmShowConnect(true);
+  } catch (e) {
+    $('asm-error').textContent = e.message || 'Erreur';
+  }
+}
+
 async function openAsmModal() {
   if (!currentPlanningId) return;
   $('asm-error').textContent = '';
   $('asm-confirm').innerHTML = '';
-  $('asm-diff').textContent = 'Chargement des stages…';
+  $('asm-status').innerHTML = '';
+  $('asm-diff').textContent = 'Chargement…';
   $('asm-stage').innerHTML = '';
+  asmShowConnect(false);
   $('asm-modal').classList.remove('hidden');
   asmSetBusy(true);
   try {
+    const status = await apiFetch('/api/asm?op=status');
+    if (!status.connected) { asmShowConnect(true); return; }
+    if (status.source === 'app') {
+      const when = status.at ? new Date(status.at).toLocaleDateString('fr-FR') : '';
+      $('asm-status').innerHTML = 'Connecté' + (status.by ? ' par ' + escapeHtml(status.by) : '') + (when ? ' le ' + escapeHtml(when) : '')
+        + ' · <button type="button" onclick="asmDisconnect()">Déconnecter</button>';
+    }
     const data = await apiFetch('/api/asm?op=stages');
     const stages = data.stages || [];
     if (!stages.length) {
@@ -2108,11 +2140,31 @@ async function openAsmModal() {
     await asmPreview();
   } catch (e) {
     $('asm-diff').textContent = '';
+    if (e.data && e.data.notConnected) asmShowConnect(true);
     $('asm-error').textContent = e.message || 'Erreur';
   } finally {
     asmSetBusy(false);
   }
 }
+
+// Back from anima.lcdb-dev.eu after "Autoriser planning-bafa".
+function asmHandleReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get('asm');
+  if (!result) return;
+  const msg = params.get('msg');
+  params.delete('asm'); params.delete('msg');
+  const q = params.toString();
+  history.replaceState(null, '', window.location.pathname + (q ? '?' + q : '') + window.location.hash);
+  if (result === 'connected') {
+    showToast('planning-bafa est connecté à Anima Stages Manager');
+    const tryOpen = (n) => { if (currentPlanningId) openAsmModal(); else if (n > 0) setTimeout(() => tryOpen(n - 1), 500); };
+    tryOpen(10);
+  } else {
+    showToast("Connexion à l'outil impossible" + (msg ? ' : ' + msg : ''));
+  }
+}
+window.addEventListener('DOMContentLoaded', asmHandleReturn);
 
 function closeAsmModal() { $('asm-modal').classList.add('hidden'); }
 
@@ -2205,6 +2257,8 @@ window.openAsmModal = openAsmModal;
 window.closeAsmModal = closeAsmModal;
 window.onAsmStageChange = onAsmStageChange;
 window.asmAsk = asmAsk;
+window.asmConnect = asmConnect;
+window.asmDisconnect = asmDisconnect;
 
 // ── HISTORIQUE DES VERSIONS ────────────────────────────────────
 const SLOT_LABELS = { matin: 'Matin', aprem: 'Après-midi', apm: 'Après-midi', veillee: 'Veillée' };

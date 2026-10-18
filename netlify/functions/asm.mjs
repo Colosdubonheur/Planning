@@ -1,19 +1,27 @@
 // /api/asm — synchro avec Anima Stages Manager (anima.lcdb-dev.eu).
 //
-//   GET  /api/asm?op=stages                       stages known by the Outil
-//   POST /api/asm { op:"preview", planningId, stageId }   cells that differ
-//   POST /api/asm { op:"pull",    planningId, stageId }   tasks for "replaceAll"
-//   POST /api/asm { op:"push",    planningId, stageId }   writes the Outil
-//
-// Owner of the planning only (same rule as the "Synchro Anima" button).
+// Connection (once, from the 🗂 window):
+//   GET  /api/asm?op=connect&planning=<id>   -> anima.lcdb-dev.eu "Autoriser planning-bafa"
+//   GET  /api/asm/pair-callback?code&state   <- back here; the one-time code is exchanged
+//                                               for the bridge token server to server
+//   GET  /api/asm?op=status                  connected or not, by whom
+//   POST /api/asm { op:"disconnect" }        forgets (and revokes) the token
+// Sync (owner of the planning only, same rule as "Synchro Anima"):
+//   GET  /api/asm?op=stages
+//   POST /api/asm { op:"preview"|"pull"|"push", planningId, stageId }
 // "pull" only converts: the browser then applies the existing replaceAll op,
 // which keeps a copy in the history before replacing.
+import crypto from "node:crypto";
 import { requireAuth } from "./_lib/auth.mjs";
 import { ensureMigration, getPlanningMeta, getPlanningState } from "./_lib/plannings.mjs";
-import { asmConfigured, asmFetch, asmToTasks, diffCells, netlifyToJours } from "./_lib/asm.mjs";
+import {
+  asmConnection, asmFetch, asmToTasks, bridgeBase, clearAsmConnection, configStore,
+  diffCells, netlifyToJours, saveAsmConnection,
+} from "./_lib/asm.mjs";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 const STAGE_RE = /^[A-Za-z0-9]{6,40}$/;
+const PAIR_TTL_MS = 10 * 60 * 1000;
 
 function json(body, init = {}) {
   return new Response(JSON.stringify(body), {
@@ -22,23 +30,72 @@ function json(body, init = {}) {
   });
 }
 
+function redirect(location) {
+  return new Response(null, { status: 302, headers: { Location: location, "Cache-Control": "no-store" } });
+}
+
+function backToApp(planningId, params) {
+  const q = new URLSearchParams(params);
+  if (planningId) q.set("planning", planningId);
+  return redirect("/?" + q.toString());
+}
+
 async function readStage(stageId) {
   return asmFetch("/stage/" + encodeURIComponent(stageId) + "/planning", { cache: "no-store" });
+}
+
+// ── Connection (pairing) ────────────────────────────────────────
+async function startPairing(url, actor) {
+  const state = crypto.randomBytes(24).toString("base64url");
+  const planningId = url.searchParams.get("planning") || "";
+  await configStore().setJSON("pair:" + state, { user: actor.user, planningId, exp: Date.now() + PAIR_TTL_MS });
+  const ret = url.origin + "/api/asm/pair-callback";
+  const pairUrl = bridgeBase().replace(/\/sync$/, "/pair");
+  return redirect(pairUrl + "?" + new URLSearchParams({ return: ret, state }).toString());
+}
+
+async function finishPairing(url, actor) {
+  const code = url.searchParams.get("code") || "";
+  const state = url.searchParams.get("state") || "";
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(state)) return backToApp("", { asm: "error" });
+  const store = configStore();
+  const pending = await store.get("pair:" + state, { type: "json" });
+  await store.delete("pair:" + state);
+  if (!pending || pending.exp < Date.now() || pending.user !== actor.user) {
+    return backToApp(pending && pending.planningId, { asm: "error", msg: "Demande expirée, recommence." });
+  }
+  try {
+    const res = await asmFetch("/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code, state, return: url.origin + "/api/asm/pair-callback" }),
+    }, "-");
+    if (!res || !res.token) throw new Error("Réponse inattendue de l'outil.");
+    await saveAsmConnection({ token: res.token, by: actor.user, at: new Date().toISOString() });
+    return backToApp(pending.planningId, { asm: "connected" });
+  } catch (e) {
+    return backToApp(pending.planningId, { asm: "error", msg: e.message || "Échec de la connexion." });
+  }
 }
 
 export default async (req) => {
   const auth = requireAuth(req);
   if (auth.error) return auth.error;
   const actor = auth.user;
-
-  if (!asmConfigured()) {
-    return json({ error: "Synchro Anima Stages Manager non configurée (ASM_SYNC_TOKEN manquant sur Netlify)." }, { status: 503 });
-  }
   await ensureMigration();
   const url = new URL(req.url);
+  const op = url.searchParams.get("op");
 
   try {
-    if (req.method === "GET" && url.searchParams.get("op") === "stages") {
+    if (url.pathname.endsWith("/pair-callback")) return await finishPairing(url, actor);
+
+    if (req.method === "GET" && op === "connect") return await startPairing(url, actor);
+
+    if (req.method === "GET" && op === "status") {
+      const conn = await asmConnection();
+      return json({ connected: !!conn, source: conn && conn.source, by: conn && conn.by, at: conn && conn.at });
+    }
+
+    if (req.method === "GET" && op === "stages") {
       const data = await asmFetch("/stages", { cache: "no-store" });
       return json({ stages: data.stages || [] });
     }
@@ -47,7 +104,16 @@ export default async (req) => {
 
     let body;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, { status: 400 }); }
-    const { op, planningId, stageId } = body || {};
+
+    if (body && body.op === "disconnect") {
+      const conn = await asmConnection();
+      if (!conn || conn.source !== "app") return json({ error: "Rien à déconnecter ici." }, { status: 400 });
+      try { await asmFetch("/revoke", { method: "POST" }, conn.token); } catch {}
+      await clearAsmConnection();
+      return json({ ok: true });
+    }
+
+    const { planningId, stageId } = body || {};
     if (!planningId) return json({ error: "Paramètre 'planningId' requis" }, { status: 400 });
     if (!STAGE_RE.test(String(stageId || ""))) return json({ error: "Stage invalide" }, { status: 400 });
 
@@ -57,15 +123,15 @@ export default async (req) => {
 
     const [state, asm] = await Promise.all([getPlanningState(planningId), readStage(stageId)]);
 
-    if (op === "preview") {
+    if (body.op === "preview") {
       return json({ cells: diffCells(state, asm), ignoredDays: netlifyToJours(state, asm).ignoredDays });
     }
 
-    if (op === "pull") {
+    if (body.op === "pull") {
       return json({ tasks: asmToTasks(state, asm) });
     }
 
-    if (op === "push") {
+    if (body.op === "push") {
       const { jours, relinked, ignoredDays } = netlifyToJours(state, asm);
       await asmFetch("/stage/" + encodeURIComponent(stageId) + "/planning", {
         method: "PUT",
@@ -76,12 +142,13 @@ export default async (req) => {
 
     return json({ error: "Opération inconnue" }, { status: 400 });
   } catch (e) {
-    const status = e.conflict ? 409 : e.status === 401 ? 502 : e.status && e.status < 500 ? e.status : 502;
-    const message = e.status === 401
-      ? "Le jeton de synchro a été refusé par Anima Stages Manager (ASM_SYNC_TOKEN)."
-      : e.message || "Anima Stages Manager injoignable";
-    return json({ error: message, conflict: !!e.conflict }, { status });
+    if (e.status === 401) {
+      return json({ error: "L'outil a refusé la connexion : reconnecte planning-bafa (bouton « Connecter »).", notConnected: true }, { status: 502 });
+    }
+    if (e.status === 503) return json({ error: e.message, notConnected: true }, { status: 503 });
+    const status = e.conflict ? 409 : e.status && e.status < 500 ? e.status : 502;
+    return json({ error: e.message || "Anima Stages Manager injoignable", conflict: !!e.conflict }, { status });
   }
 };
 
-export const config = { path: "/api/asm" };
+export const config = { path: ["/api/asm", "/api/asm/pair-callback"] };

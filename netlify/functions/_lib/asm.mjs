@@ -7,27 +7,58 @@
 // and its bridge (/_gate/sync) returns, with the planning, the titles of the
 // Anima catalog so both sides can be compared and relinked.
 //
-// Configuration (Netlify environment variables):
-//   ASM_SYNC_URL    default https://anima.lcdb-dev.eu/_gate/sync
-//   ASM_SYNC_TOKEN  bridge token (kept server side, never sent to browsers)
+// Connection: the "Connecter" button of the 🗂 window (pairing, see
+// functions/asm.mjs) stores the bridge token in the "planning-config" blob
+// store, server side only.  ASM_SYNC_TOKEN / ASM_SYNC_URL (Netlify
+// environment variables) still work and take precedence when set.
+
+import { getStore } from "@netlify/blobs";
 
 const DEFAULT_URL = "https://anima.lcdb-dev.eu/_gate/sync";
+const CONFIG_KEY = "asm";
 const SLOT_MAP = { matin: "matin", apm: "aprem", veillee: "veillee" };
 const SLOT_MAP_BACK = { matin: "matin", aprem: "apm", veillee: "veillee" };
 const KEY_RE = /^(j\d+)_(matin|apm|veillee)$/;
 const MAX_TEXT = 300;
 
 // ── Bridge client ───────────────────────────────────────────────
-export function asmConfigured() {
-  return !!process.env.ASM_SYNC_TOKEN;
+export function configStore() {
+  return getStore({ name: "planning-config", consistency: "strong" });
 }
 
-export async function asmFetch(path, init = {}) {
-  const base = (process.env.ASM_SYNC_URL || DEFAULT_URL).replace(/\/+$/, "");
-  const res = await fetch(base + path, {
+export function bridgeBase() {
+  return (process.env.ASM_SYNC_URL || DEFAULT_URL).replace(/\/+$/, "");
+}
+
+// { token, source: "env" | "app", by?, at? } or null when not connected.
+export async function asmConnection() {
+  if (process.env.ASM_SYNC_TOKEN) return { token: process.env.ASM_SYNC_TOKEN, source: "env" };
+  const cfg = await configStore().get(CONFIG_KEY, { type: "json" });
+  return cfg && cfg.token ? { ...cfg, source: "app" } : null;
+}
+
+export async function saveAsmConnection(cfg) {
+  await configStore().setJSON(CONFIG_KEY, cfg);
+}
+
+export async function clearAsmConnection() {
+  await configStore().delete(CONFIG_KEY);
+}
+
+export async function asmFetch(path, init = {}, token) {
+  if (!token) {
+    const conn = await asmConnection();
+    if (!conn) {
+      const err = new Error("planning-bafa n'est pas connecté à Anima Stages Manager.");
+      err.status = 503;
+      throw err;
+    }
+    token = conn.token;
+  }
+  const res = await fetch(bridgeBase() + path, {
     ...init,
     headers: {
-      Authorization: "Bearer " + process.env.ASM_SYNC_TOKEN,
+      ...(token ? { Authorization: "Bearer " + token } : {}),
       ...(init.body ? { "Content-Type": "application/json" } : {}),
       ...(init.headers || {}),
     },
