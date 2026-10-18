@@ -349,6 +349,7 @@
   #details-modal .modal-card { max-width: 640px; width: calc(100vw - 32px); max-height: 90vh; overflow: auto; }
   #details-modal textarea { min-height: 60px; resize: vertical; }
   #details-modal textarea#det-deroule { min-height: 120px; }
+  .details-hours { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
   .details-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
   .details-where { color: #667; font-size: 12px; margin: -6px 0 10px; }
   .details-meta { color: #889; font-size: 11px; margin-top: 4px; }
@@ -389,6 +390,12 @@
   .dv-slot.sl-veillee .chk { border-color: #7A5FB5; }
   .day-view .task-text { font-size: 11.5pt; line-height: 1.35; }
   .dv-time { display: block; font-size: 9pt; font-weight: 800; color: #5A6B80; margin-bottom: 2px; }
+  .dv-time[data-action] { cursor: pointer; }
+  .dv-time-edit { color: #E07B2A; font-size: 9pt; }
+  .dv-time-add { color: #C0621A; font-weight: 700; }
+  .horaire-shift { display: flex; gap: 8px; align-items: flex-start; font-size: 10pt; margin: 4px 0 8px; padding: 8px; background: #FFF6EC; border-radius: 8px; cursor: pointer; }
+  .horaire-shift input { margin-top: 3px; }
+  button.dr-chip { border: 0; font-family: inherit; cursor: pointer; }
   .dv-go { font-size: 22px; color: #9AA6B5; padding: 0 4px; }
   .dv-repas { margin: 6px 10px; padding: 8px; text-align: center; background: #F4F1EA; border-radius: 10px; color: #7A6A4A; font-size: 10pt; }
   .dv-nav { display: flex; justify-content: space-between; gap: 8px; padding: 12px 10px 16px; }
@@ -1270,6 +1277,20 @@
     <div class="details-where" id="details-where"></div>
     <div class="details-read" id="details-read"></div>
     <div id="details-form">
+    <div class="modal-field">
+      <label for="det-titre">Titre</label>
+      <input id="det-titre" maxlength="300">
+    </div>
+    <div class="details-hours">
+      <div class="modal-field">
+        <label for="det-hdebut">Début</label>
+        <input type="time" id="det-hdebut" step="300">
+      </div>
+      <div class="modal-field">
+        <label for="det-hfin">Fin</label>
+        <input type="time" id="det-hfin" step="300">
+      </div>
+    </div>
     <div class="details-grid">
       <div class="modal-field team-only">
         <label for="det-formateurs">Formateur(s)</label>
@@ -1402,13 +1423,14 @@
 
 <div class="modal-backdrop hidden" id="horaire-modal">
   <div class="modal-card">
-    <h3>Changer l'horaire ?</h3>
+    <h3>Changer l'horaire</h3>
     <p id="horaire-task" style="font-weight:700;margin-bottom:2px"></p>
     <p id="horaire-current" style="color:#667;font-size:9pt;margin-bottom:10px"></p>
     <div style="display:flex;gap:8px">
-      <div class="modal-field" style="flex:1"><label for="horaire-start">Début</label><input type="time" id="horaire-start" step="300"></div>
-      <div class="modal-field" style="flex:1"><label for="horaire-end">Fin</label><input type="time" id="horaire-end" step="300"></div>
+      <div class="modal-field" style="flex:1"><label for="horaire-start">Début</label><input type="time" id="horaire-start" step="300" onfocus="this.dataset.prev=this.value" oninput="onHoraireStartInput(this)"></div>
+      <div class="modal-field" style="flex:1"><label for="horaire-end">Fin</label><input type="time" id="horaire-end" step="300" oninput="updateHoraireShift()"></div>
     </div>
+    <label class="horaire-shift" id="horaire-shift-wrap" style="display:none"><input type="checkbox" id="horaire-shift" checked> <span id="horaire-shift-label"></span></label>
     <div class="modal-error" id="horaire-error"></div>
     <div class="modal-actions">
       <button class="modal-btn ghost" type="button" onclick="closeHoraireModal()">Garder l'horaire</button>
