@@ -190,6 +190,13 @@ function applyOp(state, op, actor) {
   const requireOwner = () => {
     if (!actor.isOwner) throw new Error("Permission refusée (propriétaire requis)");
   };
+  // Bulk replacement (synchro Anima Stages Manager): owner, or a directeur of
+  // the planning (who can already edit every task one by one).
+  const requireOwnerOrDirecteur = () => {
+    if (!actor.isOwner && !(actor.role === "directeur" && actor.scope !== "sync")) {
+      throw new Error("Permission refusée (propriétaire ou directeur requis)");
+    }
+  };
 
   switch (op.op) {
     case "toggle": {
@@ -361,7 +368,7 @@ function applyOp(state, op, actor) {
     // are matched (by animaId first, then by text within the same cell,
     // then by text anywhere) so their id and "done" state survive.
     case "replaceAll": {
-      requireOwner();
+      requireOwnerOrDirecteur();
       if (!Array.isArray(op.tasks)) throw new Error("Liste de tâches manquante");
       if (op.tasks.length > 1000) throw new Error("Trop de tâches");
       const dayIds = new Set(state.days.map((d) => d.id));
@@ -532,7 +539,7 @@ export default async (req) => {
     // about to be overwritten.  Saved only once the replacement succeeded,
     // best-effort (never blocks the operation).
     let before = null;
-    if (body.op === "replaceAll" && effectiveActor.isOwner) {
+    if (body.op === "replaceAll" && (effectiveActor.isOwner || (actor.role === "directeur" && actor.scope !== "sync"))) {
       try { before = await getPlanningState(planningId); } catch {}
     }
 

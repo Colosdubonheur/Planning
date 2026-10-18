@@ -250,7 +250,7 @@ function applyUserUI() {
   $('btn-rename-planning').style.display = owner ? '' : 'none';
   $('btn-delete-planning').style.display = owner ? '' : 'none';
   $('btn-anima-sync').style.display = owner ? '' : 'none';
-  $('btn-asm-sync').style.display = owner ? '' : 'none';
+  $('btn-asm-sync').style.display = owner || (currentUser && currentUser.role === 'directeur') ? '' : 'none';
   $('btn-history').style.display = owner ? '' : 'none';
   $('btn-batch').style.display = owner ? '' : 'none';
 
@@ -354,7 +354,7 @@ function renderPlanningSelector() {
   $('btn-rename-planning').style.display = canOwn ? '' : 'none';
   $('btn-delete-planning').style.display = canOwn ? '' : 'none';
   $('btn-anima-sync').style.display = canOwn ? '' : 'none';
-  $('btn-asm-sync').style.display = canOwn ? '' : 'none';
+  $('btn-asm-sync').style.display = canOwn || (currentUser && currentUser.role === 'directeur') ? '' : 'none';
   $('btn-history').style.display = canOwn ? '' : 'none';
   $('btn-batch').style.display = canOwn ? '' : 'none';
 

@@ -6,14 +6,14 @@
 //                                               for the bridge token server to server
 //   GET  /api/asm?op=status                  connected or not, by whom
 //   POST /api/asm { op:"disconnect" }        forgets (and revokes) the token
-// Sync (owner of the planning only, same rule as "Synchro Anima"):
+// Sync (owner of the planning, or a directeur who has access to it):
 //   GET  /api/asm?op=stages
 //   POST /api/asm { op:"preview"|"pull"|"push", planningId, stageId }
 // "pull" only converts: the browser then applies the existing replaceAll op,
 // which keeps a copy in the history before replacing.
 import crypto from "node:crypto";
 import { requireAuth } from "./_lib/auth.mjs";
-import { ensureMigration, getPlanningMeta, getPlanningState } from "./_lib/plannings.mjs";
+import { ensureMigration, getPlanningMeta, getPlanningState, userHasAccess } from "./_lib/plannings.mjs";
 import {
   asmConnection, asmFetch, asmToTasks, bridgeBase, clearAsmConnection, configStore,
   diffCells, netlifyToJours, saveAsmConnection,
@@ -119,7 +119,8 @@ export default async (req) => {
 
     const meta = await getPlanningMeta(planningId);
     if (!meta) return json({ error: "Planning introuvable" }, { status: 404 });
-    if (meta.ownerId !== actor.user) return json({ error: "Réservé au propriétaire du planning" }, { status: 403 });
+    const allowed = meta.ownerId === actor.user || (actor.role === "directeur" && await userHasAccess(actor.user, planningId));
+    if (!allowed) return json({ error: "Réservé au propriétaire du planning et aux directeurs" }, { status: 403 });
 
     const [state, asm] = await Promise.all([getPlanningState(planningId), readStage(stageId)]);
 
