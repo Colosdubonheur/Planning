@@ -823,7 +823,42 @@ function offerHoraire(taskId, force) {
   $('horaire-start').value = toTimeInput(start);
   $('horaire-end').value = toTimeInput(start + dur);
   $('horaire-error').textContent = '';
+  // Blocks after this one in the same slot that can be pushed back too.
+  horaireFollowers = own && own.end != null
+    ? col.slice(i + 1).map((x) => ({ t: x, h: parseHoraire(horaireOf(x)) }))
+      .filter((x) => x.h && x.h.end != null && x.h.start >= own.end - 1)
+    : [];
+  horaireOldEnd = own && own.end != null ? own.end : null;
+  $('horaire-shift').checked = true;
+  updateHoraireShift();
   $('horaire-modal').classList.remove('hidden');
+}
+
+// Moving the start keeps the duration: the end follows.
+function onHoraireStartInput(el) {
+  const prev = fromTimeInput(el.dataset.prev), now = fromTimeInput(el.value), end = fromTimeInput($('horaire-end').value);
+  if (prev != null && now != null && end != null) {
+    const e2 = Math.min(24 * 60 - 1, Math.max(now + 5, end + now - prev));
+    $('horaire-end').value = toTimeInput(e2);
+  }
+  el.dataset.prev = el.value;
+  updateHoraireShift();
+}
+
+let horaireFollowers = [];
+let horaireOldEnd = null;
+function horaireDelta() {
+  const end = fromTimeInput($('horaire-end').value);
+  return end != null && horaireOldEnd != null ? end - horaireOldEnd : 0;
+}
+function updateHoraireShift() {
+  const d = horaireDelta();
+  const show = horaireFollowers.length && d !== 0;
+  $('horaire-shift-wrap').style.display = show ? '' : 'none';
+  if (show) {
+    const n = horaireFollowers.length;
+    $('horaire-shift-label').textContent = `${d > 0 ? 'Retarder' : 'Avancer'} aussi ${n === 1 ? 'le temps suivant' : `les ${n} temps suivants`} de ${Math.abs(d)} min`;
+  }
 }
 
 function closeHoraireModal() {
@@ -837,15 +872,19 @@ async function saveHoraire() {
   const start = fromTimeInput($('horaire-start').value);
   const end = fromTimeInput($('horaire-end').value);
   if (start == null || end == null || end <= start) { $('horaire-error').textContent = 'La fin doit être après le début'; return; }
-  const line = `Horaire conseillé : ${fmtHoraire(start)} - ${fmtHoraire(end)}`;
-  const old = String((t.details && t.details.deroule) || '');
-  const deroule = /Horaire conseillé : [^\n]*/.test(old)
-    ? old.replace(/Horaire conseillé : [^\n]*/, line)
-    : line + (old ? '\n\n' + old : '');
+  const items = [{ taskId: t.id, start, end }];
+  const d = horaireDelta();
+  if (d && $('horaire-shift').checked && $('horaire-shift-wrap').style.display !== 'none') {
+    for (const f of horaireFollowers) {
+      const s2 = f.h.start + d, e2 = f.h.end + d;
+      if (s2 < 0 || e2 > 24 * 60) { $('horaire-error').textContent = 'Le décalage sort de la journée'; return; }
+      items.push({ taskId: f.t.id, start: s2, end: e2 });
+    }
+  }
   try {
-    await pushOp({ op: 'setDetails', taskId: t.id, details: { deroule } });
+    await pushOp({ op: 'setHoraires', items });
     closeHoraireModal();
-    showToast('Horaire mis à jour');
+    showToast(items.length > 1 ? `Horaires mis à jour (${items.length} temps)` : 'Horaire mis à jour');
   } catch (e) {
     $('horaire-error').textContent = e.message || 'Erreur';
   }
@@ -962,7 +1001,7 @@ function renderDayView() {
       const h = horaireOf(t);
       html += `<li class="task${t.done ? ' done' : ''}" data-task-id="${escapeHtml(t.id)}">
         <span class="chk" role="checkbox" aria-checked="${t.done ? 'true' : 'false'}" aria-label="Fait"></span>
-        <span class="task-text">${h ? `<span class="dv-time">${escapeHtml(h)}<span class="dv-now-badge">En cours</span></span>` : ''}${escapeHtml(t.text)}${taskBadges(t)}</span>
+        <span class="task-text">${h ? `<span class="dv-time"${isEditor ? ' data-action="horaire" role="button" title="Changer l\'horaire"' : ''}>${escapeHtml(h)}${isEditor ? ' <span class="dv-time-edit">✎</span>' : ''}<span class="dv-now-badge">En cours</span></span>` : (isEditor && editMode ? '<span class="dv-time dv-time-add" data-action="horaire" role="button">🕘 Ajouter un horaire</span>' : '')}${escapeHtml(t.text)}${taskBadges(t)}</span>
         ${showDetailsButton(t) ? '<span class="dv-go" aria-hidden="true">›</span>' : ''}
       </li>`;
     }
@@ -1059,6 +1098,13 @@ function initDragAndDrop() {
 
 // ── EVENT DELEGATION ───────────────────────────────────────────
 function onTableClick(e) {
+  const horaireBtn = e.target.closest('[data-action="horaire"]');
+  if (horaireBtn) {
+    e.stopPropagation();
+    const li = horaireBtn.closest('li.task');
+    if (li) offerHoraire(li.dataset.taskId, true);
+    return;
+  }
   const infoBtn = e.target.closest('[data-action="details"]');
   if (infoBtn) {
     e.stopPropagation();
@@ -2188,6 +2234,12 @@ function detailsValues(t) {
   const d = (t && t.details) || {};
   const v = { statut: d.statut || '', formateurs: (d.formateurs || []).join(', ') };
   for (const f of DETAIL_FIELDS) v[f] = d[f] || '';
+  // The time lives on the first line of the déroulé: edit it in its own fields.
+  const h = parseHoraire(horaireOf(t || {}));
+  v.deroule = v.deroule.replace(/^Horaire conseillé : [^\n]*\n*/, '');
+  v.hdebut = h ? toTimeInput(h.start) : '';
+  v.hfin = h && h.end != null ? toTimeInput(h.end) : '';
+  v.titre = (t && t.text) || '';
   return v;
 }
 
@@ -2217,6 +2269,7 @@ function openDetailsModal(taskId) {
   }
   $('det-formateurs').value = detailsBase.formateurs;
   $('det-formateurs').readOnly = !editable;
+  for (const k of ['hdebut', 'hfin', 'titre']) { $('det-' + k).value = detailsBase[k]; $('det-' + k).readOnly = !editable; }
   $('det-statut').value = detailsBase.statut;
   $('det-statut').disabled = !editable;
   $('det-formateurs-list').innerHTML = knownFormateurs().map((n) => `<option value="${escapeHtml(n)}">`).join('');
@@ -2257,7 +2310,8 @@ function renderDetailsRead(t) {
   const d = t.details || {};
   const chips = [];
   const h = horaireOf(t);
-  if (h) chips.push(`<span class="dr-chip time">🕘 ${escapeHtml(h)}</span>`);
+  if (canEditContent()) chips.push(`<button type="button" class="dr-chip time" onclick="offerHoraire('${escapeHtml(t.id)}', true)">🕘 ${h ? escapeHtml(h) + ' ✎' : 'Ajouter un horaire'}</button>`);
+  else if (h) chips.push(`<span class="dr-chip time">🕘 ${escapeHtml(h)}</span>`);
   if (d.duree) chips.push(`<span class="dr-chip">⏱ ${escapeHtml(d.duree)}</span>`);
   if (Array.isArray(d.formateurs) && d.formateurs.length) chips.push(`<span class="dr-chip">👤 ${escapeHtml(d.formateurs.join(', '))}</span>`);
   if (d.statut) chips.push(`<span class="dr-chip">${escapeHtml(STATUS_LABELS[d.statut] || d.statut)}</span>`);
@@ -2293,6 +2347,9 @@ function closeDetailsModal() {
 function readDetailsForm() {
   const v = { statut: $('det-statut').value, formateurs: $('det-formateurs').value };
   for (const f of DETAIL_FIELDS) v[f] = $('det-' + f).value;
+  v.hdebut = $('det-hdebut').value;
+  v.hfin = $('det-hfin').value;
+  v.titre = $('det-titre').value;
   return v;
 }
 
@@ -2327,16 +2384,31 @@ async function saveDetails() {
   const now = readDetailsForm();
   const patch = {};
   for (const k of Object.keys(now)) {
-    if (now[k] === detailsBase[k]) continue;
+    if (now[k] === detailsBase[k] || ['hdebut', 'hfin', 'titre'].includes(k)) continue;
     patch[k] = k === 'formateurs'
       ? now[k].split(',').map((x) => x.trim()).filter(Boolean)
       : now[k];
   }
-  if (!Object.keys(patch).length) { closeDetailsModal(); return; }
+  // Time and déroulé are stored together: rebuild the déroulé if either changed.
+  const hChanged = now.hdebut !== detailsBase.hdebut || now.hfin !== detailsBase.hfin;
+  if (hChanged || 'deroule' in patch) {
+    const start = fromTimeInput(now.hdebut);
+    const end = fromTimeInput(now.hfin);
+    if ((now.hdebut || now.hfin) && (start == null || end == null || end <= start)) {
+      $('details-error').textContent = 'Horaire : la fin doit être après le début';
+      return;
+    }
+    const line = start != null ? `Horaire conseillé : ${fmtHoraire(start)} - ${fmtHoraire(end)}` : '';
+    patch.deroule = [line, now.deroule.trim()].filter(Boolean).join('\n\n');
+  }
+  const titre = now.titre.trim();
+  const renamed = titre && titre !== detailsBase.titre;
+  if (!Object.keys(patch).length && !renamed) { closeDetailsModal(); return; }
   const btn = $('details-save');
   btn.disabled = true;
   try {
-    await pushOp({ op: 'setDetails', taskId: detailsTaskId, details: patch });
+    if (renamed) await pushOp({ op: 'edit', taskId: detailsTaskId, text: titre });
+    if (Object.keys(patch).length) await pushOp({ op: 'setDetails', taskId: detailsTaskId, details: patch });
     showToast('Fiche enregistrée');
     closeDetailsModal();
   } catch (e) {

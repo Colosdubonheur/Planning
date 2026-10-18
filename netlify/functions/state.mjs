@@ -253,6 +253,25 @@ function applyOp(state, op, actor) {
       break;
     }
 
+    case "setHoraires": {
+      // Set the "Horaire conseillé" of one or more blocks at once (a block and
+      // the ones it pushes back).  Times in minutes since midnight.
+      if (!Array.isArray(op.items) || !op.items.length || op.items.length > 60) throw new Error("Horaires invalides");
+      for (const it of op.items) {
+        const task = state.tasks.find((t) => t.id === (it && it.taskId));
+        if (!task) throw new Error("Tâche introuvable");
+        const start = Number(it.start), end = Number(it.end);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > 24 * 60 || end <= start) {
+          throw new Error("Horaire invalide");
+        }
+        const line = `Horaire conseillé : ${fmtMin(start)} - ${fmtMin(end)}`;
+        const old = String((task.details && task.details.deroule) || "");
+        const deroule = HORAIRE_RE.test(old) ? old.replace(HORAIRE_RE, line) : line + (old ? "\n\n" + old : "");
+        applyDetailsPatch(task, { deroule }, actor.user);
+      }
+      break;
+    }
+
     case "restore": {
       const trash = Array.isArray(state.trash) ? state.trash : [];
       const i = trash.findIndex((t) => t.id === op.taskId);
