@@ -389,6 +389,7 @@ function applyOp(state, op, actor) {
         const animaIds = cleanAnimaIds(raw.animaIds);
         const animaId = animaIds ? animaIds[0] : cleanAnimaId(raw.animaId);
         const prev =
+          (typeof raw.id === "string" && raw.id && take((t) => t.id === raw.id)) ||
           (animaId && take((t) => t.animaId === animaId)) ||
           (animaId && take((t) => Array.isArray(t.animaIds) && t.animaIds.includes(animaId))) ||
           take((t) => t.dayId === dayId && t.slotId === slotId && t.text === text) ||

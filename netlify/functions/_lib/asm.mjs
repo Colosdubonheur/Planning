@@ -93,7 +93,7 @@ function titleFor(asm, id) {
   if (f && f.titre) return clean(f.titre);
   if (asm.catalog && asm.catalog[id]) return clean(asm.catalog[id]);
   const g = /^groupe:([^:]*):(.*)$/.exec(id);
-  if (g) return clean(g[1] + " : " + g[2]);
+  if (g) return clean(g[1] + " — " + g[2]);
   return clean(id);
 }
 function ficheFor(asm, id) {
@@ -154,7 +154,8 @@ function collapseBlocks(items, state) {
   return out;
 }
 
-function cellSig(items) { return items.map((i) => norm(i.text)).join("\n"); }
+const isLinkedId = (id) => !!id && (/^[0-9a-f]{24}$/i.test(id) || id.startsWith("groupe:"));
+function cellSig(items) { return items.map((i) => (isLinkedId(i.animaId) ? "id:" + i.animaId : "tx:" + norm(i.text))).join("\n"); }
 
 // Cells that differ, for the preview shown before choosing a direction.
 export function diffCells(state, asm) {
@@ -182,10 +183,14 @@ export function diffCells(state, asm) {
 export function asmToTasks(state, asm) {
   const a = asmModel(asm);
   const tasks = [];
+  // A planning-bafa block already linked to this module keeps its own text
+  // (« Forum 2 (G2) » stays as typed instead of becoming « Forums : G2 »).
+  const ownText = {};
+  for (const t of state.tasks || []) if (t.animaId && !ownText[t.animaId]) ownText[t.animaId] = t.text;
   for (const d of state.days) {
     for (const s of ["matin", "aprem", "veillee"]) {
       for (const it of collapseBlocks(a[d.id + "|" + s] || [], state)) {
-        const text = (it.text || it.animaId || "").slice(0, MAX_TEXT);
+        const text = ((!it.block && ownText[it.animaId]) || it.text || it.animaId || "").slice(0, MAX_TEXT);
         if (!text) continue;
         if (it.block) {
           tasks.push({ dayId: d.id, slotId: s, text, animaId: it.animaId, animaIds: it.animaIds });
@@ -197,6 +202,30 @@ export function asmToTasks(state, asm) {
     }
   }
   return tasks;
+}
+
+// « Forum 2 (G2) », « HAJ G4 · 3-6 ans », « Grand jeu 1 » -> the group of the
+// stage (onglet Groupes de l'outil), so the Outil and ANIMA see the group (with
+// its members) instead of a free text.  Explicit patterns only, no guessing.
+const GROUP_RULES = [
+  { type: /^forums?$/, text: /^forum\b/, nom: (t) => (/\bg\s?(\d+)\b/.exec(t) || [])[1], match: (n, k) => norm(n).replace(/\s+/g, "") === "g" + k },
+  { type: /^haj$/, text: /^haj\b/, nom: (t) => (/\bg\s?(\d+)\b/.exec(t) || [])[1], match: (n, k) => norm(n).replace(/\s+/g, "") === "g" + k },
+  { type: /^grands? jeux?$/, text: /^grand jeu\b/, nom: (t) => (/^grand jeu\s*(\d+)\b/.exec(t) || [])[1], match: (n, k) => norm(n).replace(/\s+/g, "") === "gj" + k },
+];
+
+export function groupFor(text, groupes) {
+  const t = norm(text);
+  for (const [type, noms] of Object.entries(groupes || {})) {
+    const tn = norm(type);
+    for (const r of GROUP_RULES) {
+      if (!r.type.test(tn) || !r.text.test(t)) continue;
+      const k = r.nom(t);
+      if (!k) continue;
+      const nom = (noms || []).find((n) => r.match(n, k));
+      if (nom) return "groupe:" + type + ":" + nom;
+    }
+  }
+  return null;
 }
 
 // planning-bafa -> Outil : the new "jours" for the Anima Stages Manager.
@@ -247,8 +276,11 @@ export function netlifyToJours(state, asm) {
       .flatMap((t) => {
         const ids = blockIds(t);
         if (ids) return ids.map(entryFor);
-        const id = t.animaId || byTitle[norm(t.text)] || t.text;
-        if (!t.animaId && id !== t.text) relinked.push(t.text);
+        // An animaId that is just the text (free text, recorded by a previous
+        // sync) is not a link: such blocks can still be linked now.
+        const linked = isLinkedId(t.animaId) ? t.animaId : null;
+        const id = linked || byTitle[norm(t.text)] || groupFor(t.text, asm.groupes) || t.animaId || t.text;
+        if (!linked && isLinkedId(id)) relinked.push({ taskId: t.id, animaId: id });
         return [entryFor(id)];
       });
   }

@@ -138,7 +138,7 @@ export default async (req) => {
         method: "PUT",
         body: JSON.stringify({ jours, rev: asm.rev }),
       });
-      return json({ ok: true, relinked: relinked.length, ignoredDays });
+      return json({ ok: true, relinked: relinked.length, links: relinked, ignoredDays });
     }
 
     return json({ error: "Opération inconnue" }, { status: 400 });

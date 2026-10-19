@@ -2300,9 +2300,27 @@ async function asmRun(direction) {
         method: 'POST',
         body: JSON.stringify({ op: 'push', planningId: currentPlanningId, stageId: asmStageId() }),
       });
-      // Items typed by hand that matched the Anima catalog: record their ids
-      // here too, so the next syncs match by id rather than by title.
-      if (res.relinked) await asmPullInto('Avant liaison au catalogue Anima');
+      // Blocks typed by hand that matched the Anima catalog or a group of the
+      // stage: record the link on OUR blocks (text, time and fiche unchanged),
+      // so the next syncs match by id rather than by title.
+      if (res.links && res.links.length) {
+        const link = {};
+        res.links.forEach((l) => { link[l.taskId] = l.animaId; });
+        const slotOrder = (currentState.slots || []).map((sl) => sl.id);
+        const dayOrder = (currentState.days || []).map((d) => d.id);
+        const tasks = currentState.tasks.slice()
+          .filter((t) => t.slotId !== 'repas')
+          .sort((a, b) => dayOrder.indexOf(a.dayId) - dayOrder.indexOf(b.dayId)
+            || slotOrder.indexOf(a.slotId) - slotOrder.indexOf(b.slotId) || (a.order || 0) - (b.order || 0))
+          .map((t) => {
+            const out = { id: t.id, dayId: t.dayId, slotId: t.slotId, text: t.text };
+            const id = link[t.id] || t.animaId;
+            if (Array.isArray(t.animaIds) && t.animaIds.length > 1) out.animaIds = t.animaIds;
+            else if (id) out.animaId = id;
+            return out;
+          });
+        await pushOp({ op: 'replaceAll', tasks, reason: 'Avant liaison au catalogue Anima et aux groupes' });
+      }
       showToast('Planning envoyé vers l\'outil' + (res.relinked ? ' (' + res.relinked + ' temps reliés au catalogue Anima)' : ''));
     }
     await asmPreview();
