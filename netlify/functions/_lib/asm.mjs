@@ -186,11 +186,16 @@ export function asmToTasks(state, asm) {
   // A planning-bafa block already linked to this module keeps its own text
   // (« Forum 2 (G2) » stays as typed instead of becoming « Forums : G2 »).
   const ownText = {};
-  for (const t of state.tasks || []) if (t.animaId && !ownText[t.animaId]) ownText[t.animaId] = t.text;
+  const ownTextAt = {};   // same module used twice (« QCM de mi-stage », « QCM ») : the text of THAT slot
+  for (const t of state.tasks || []) {
+    if (t.animaId && !ownText[t.animaId]) ownText[t.animaId] = t.text;
+    if (t.animaId) ownTextAt[t.dayId + "|" + t.slotId + "|" + t.animaId] ??= t.text;
+  }
   for (const d of state.days) {
     for (const s of ["matin", "aprem", "veillee"]) {
       for (const it of collapseBlocks(a[d.id + "|" + s] || [], state)) {
-        const text = ((!it.block && ownText[it.animaId]) || it.text || it.animaId || "").slice(0, MAX_TEXT);
+        const text = ((!it.block && (ownTextAt[d.id + "|" + s + "|" + it.animaId] || ownText[it.animaId]))
+          || it.text || it.animaId || "").slice(0, MAX_TEXT);
         if (!text) continue;
         if (it.block) {
           tasks.push({ dayId: d.id, slotId: s, text, animaId: it.animaId, animaIds: it.animaIds });
@@ -238,6 +243,12 @@ export function netlifyToJours(state, asm) {
   for (const [id, titre] of Object.entries(asm.catalog || {})) {
     if (titre) byTitle[norm(titre)] = id;
   }
+  // Correspondences validated by the director in the Outil:
+  // « Santé : registre, PAI, bobologie » -> [registre de soins, PAI].
+  const byLien = {};
+  for (const [txt, ids] of Object.entries(asm.liens || {})) {
+    if (Array.isArray(ids) && ids.length && ids.every(isLinkedId)) byLien[norm(txt)] = ids;
+  }
   const existing = {};
   for (const list of Object.values(jours)) {
     for (const e of list || []) {
@@ -279,6 +290,11 @@ export function netlifyToJours(state, asm) {
         // An animaId that is just the text (free text, recorded by a previous
         // sync) is not a link: such blocks can still be linked now.
         const linked = isLinkedId(t.animaId) ? t.animaId : null;
+        const lien = !linked && byLien[norm(t.text)];
+        if (lien) {
+          relinked.push(lien.length > 1 ? { taskId: t.id, animaId: lien[0], animaIds: lien } : { taskId: t.id, animaId: lien[0] });
+          return lien.map(entryFor);
+        }
         const id = linked || byTitle[norm(t.text)] || groupFor(t.text, asm.groupes) || t.animaId || t.text;
         if (!linked && isLinkedId(id)) relinked.push({ taskId: t.id, animaId: id });
         return [entryFor(id)];
