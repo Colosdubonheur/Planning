@@ -2305,7 +2305,7 @@ async function asmRun(direction) {
       // so the next syncs match by id rather than by title.
       if (res.links && res.links.length) {
         const link = {};
-        res.links.forEach((l) => { link[l.taskId] = l.animaId; });
+        res.links.forEach((l) => { link[l.taskId] = l; });
         const slotOrder = (currentState.slots || []).map((sl) => sl.id);
         const dayOrder = (currentState.days || []).map((d) => d.id);
         const tasks = currentState.tasks.slice()
@@ -2314,9 +2314,12 @@ async function asmRun(direction) {
             || slotOrder.indexOf(a.slotId) - slotOrder.indexOf(b.slotId) || (a.order || 0) - (b.order || 0))
           .map((t) => {
             const out = { id: t.id, dayId: t.dayId, slotId: t.slotId, text: t.text };
-            const id = link[t.id] || t.animaId;
-            if (Array.isArray(t.animaIds) && t.animaIds.length > 1) out.animaIds = t.animaIds;
-            else if (id) out.animaId = id;
+            const l = link[t.id];
+            // several Anima modules for one block (« Santé : registre, PAI… ») : animaIds
+            if (l && Array.isArray(l.animaIds) && l.animaIds.length > 1) out.animaIds = l.animaIds;
+            else if (l && l.animaId) out.animaId = l.animaId;
+            else if (Array.isArray(t.animaIds) && t.animaIds.length > 1) out.animaIds = t.animaIds;
+            else if (t.animaId) out.animaId = t.animaId;
             return out;
           });
         await pushOp({ op: 'replaceAll', tasks, reason: 'Avant liaison au catalogue Anima et aux groupes' });
